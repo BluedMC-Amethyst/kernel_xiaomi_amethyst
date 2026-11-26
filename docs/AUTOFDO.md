@@ -26,11 +26,12 @@ Typical gains on kernel-heavy work are a few percent. A bad profile can make thi
    **Automated (larger, repeatable dataset):** also push `tools/afdo/afdo_workload.sh`, keep the phone unlocked on USB, and run
    `adb shell 'su -c "sh /data/local/tmp/afdo_record.sh 1800 workload"'` (30 min).
    The workload opens only allowlisted apps (Settings, Gallery, Clock, Calculator, Camera viewfinder, Notes, browser on fixed public pages, YouTube/Maps if installed). It only scrolls, never taps or types, and closes each app after use, so every launch is a cold start. Between app rounds it adds f2fs file I/O, EROFS reads and binder calls.
-   Several recordings can be merged by concatenating their `report_vaddr.txt` files, as long as they come from the same kernel, or by converting each against its own `vmlinux` and merging with `llvm-profdata merge --sample`.
-3. Make the profile (on the PC):
+   **Your own sessions:** every run lands in its own folder (`/sdcard/bluedmc-afdo/<date-time>`), so record as often as you like and pull them all at the end. For long sessions away from the PC, start it detached and unplug: `adb shell 'su -c "nohup sh /data/local/tmp/afdo_record.sh 3600 >/sdcard/afdo-run.log 2>&1 &"'`. Runs of 30 min or more sample at 1 kHz instead of 4 kHz (`FREQ=` overrides).
+3. Make the profile (on the PC). Merge every recording, from any BluedMC build you kept the dist dir of:
    ```
-   tools/afdo/make_profile.sh bluedmc-afdo ~/AmethystGKI/ws138/out/v1.2
+   tools/afdo/merge_recordings.sh bluedmc-afdo/bluedmc.afdo bluedmc-afdo/
    ```
+   Each recording is matched to its kernel by `uname -r` plus symbol offsets, converted against that build's `vmlinux`, then merged with `llvm-profdata merge --sample`. Recordings count by how long they ran; `WEIGHT_<folder>=N` (folder name with `-` as `_`) boosts one, e.g. a gaming session. (`make_profile.sh` still converts a single recording.)
 4. Build the AFDO kernel on an experimental branch:
    ```
    git -C $TOP/common checkout -B kernel-afdo kernel
