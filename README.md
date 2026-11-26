@@ -1,41 +1,110 @@
-# Amethyst GKI Kernel
+# BluedMC kernel for amethyst
 
-An unofficial Generic Kernel Image (GKI) kernel project for the **Redmi Note 14 Pro+ 5G** (codename **amethyst**).
+GKI kernel for the **Redmi Note 14 Pro+ 5G (`amethyst`)**, SM7635 "volcano" (Snapdragon 7s Gen 3).
+It's built on [TechAmethyst](https://github.com/TheTechGuy69/techamethyst-kernel) v1.3 (android14-6.1-2026-06_r14, Linux 6.1.172), plus the [WildKernels](https://github.com/WildKernels/GKI_KernelSU_SUSFS) feature set and SM7635 compiler tuning.
+The KMI stays identical, so Xiaomi's prebuilt vendor modules keep loading. Every build is gated against the imports of the stock `.ko` files.
 
-This repository is intended to document the kernel source, build process, and device-specific releases. It currently contains no kernel source, build scripts, or release images, so there is not yet a build or installation procedure available here.
+> ⚠️ **Experimental.** A broken kernel means a boot loop. Keep a copy of the boot.img you run now, and an unlocked bootloader.
 
 ## Device
+| | |
+|---|---|
+| Phone | Redmi Note 14 Pro+ 5G, `amethyst` |
+| SoC | SM7635 "volcano": 4× Cortex-A520 + 3× A720 + 1× prime A720 (all Armv9.2-A), Adreno 810 |
+| Stock kernel | `6.1.138-android14-11-g0c3d559bcd85` (HyperOS 3.0 vendor) |
+| BluedMC kernel | android14-6.1 GKI, Linux 6.1.172, KMI generation 11 |
 
-| Item | Details |
-| --- | --- |
-| Device | Redmi Note 14 Pro+ 5G |
-| Codename | `amethyst` |
-| Kernel type | Android GKI |
-| Kernel base and supported firmware | Not documented yet |
+## Features
+From TechAmethyst v1.3:
+- **KernelSU-Next** (pershoot `dev-susfs`) built in, plus **SUSFS v2.x**. Use the **stock** init_boot, not a KSU-patched one.
+- TCP BBR, NTFS3, a wakelock blocker (`/sys/module/wakeup/parameters/ta_ws_block`), MGLRU, zram lzo-rle.
 
-Kernel compatibility can depend on the Android release, vendor firmware, and matching GKI modules. Check the compatibility information for a specific release before using it.
+Added by BluedMC (one commit each on the `kernel` branch):
+| Commit | What |
+|---|---|
+| `brand` | `uname -r` ends in `-BluedMC-vX.Y`; status node `/sys/kernel/bluedmc/{version,features}` |
+| `misc` | tmpfs xattr + POSIX ACL |
+| `net` | IP sets, xt_set / addrtype / recent / LOG, IPv6 NAT + MASQUERADE, REJECT, CAKE, TTL/HL, connmark, BIC/Westwood/HTCP, WireGuard |
+| `cifs` | SMB/CIFS client |
+| `ntsync` | `/dev/ntsync` (Wine/Proton) |
+| `bbg` | [Baseband Guard](https://github.com/vc-teahouse/Baseband-guard) LSM: blocks writes to critical partitions (modem, bootloaders, …) |
+| `bbrv3` | TCP BBRv3, now the default congestion control (BBR v1 is still available as `bbr`) |
+| `perf` | WildKernels performance patches (memcpy/memcmp/clear_page, f2fs/ext4/dcache tuning, log-spam cuts). The wakelock-timeout and freeze-timeout patches are left out. |
+| `opt` | `-O3`, full LTO, `-mtune=cortex-a710` |
 
-## Builds and releases
+About `-mtune`: the AOSP clang 17 that this branch pins has no Cortex-A720 model. TechAmethyst's `-mtune=cortex-a720` was therefore silently dropped. BluedMC tunes for the Cortex-A710, the A720's predecessor and the closest model available.
+This only changes instruction scheduling, not the instruction set.
 
-No prebuilt images or supported release versions are currently published in this repository. A release should include its matching source revision, Android common kernel base, build instructions, supported firmware, required images or partitions, and checksums before it is used.
+## Installing (HyperOS)
+Releases ship **one AnyKernel3 zip**: `BluedMC-vX.Y-amethyst-*.zip`, plus `SHA256SUMS` and `config.txt`.
+It only replaces the kernel `Image` in your current `boot` partition. Your HyperOS ramdisk, init_boot, vendor_boot, dtbo and system_dlkm are all left as they are.
+
+You need:
+- an unlocked bootloader
+- HyperOS with the 6.1.138 GKI kernel. The stock system_dlkm and vendor modules pass the KMI gate against this kernel.
+- the **stock init_boot**. KernelSU-Next is built into the kernel; a Magisk/KSU-LKM-patched init_boot conflicts with it.
+- a backup of your current boot. With root:
+  `adb shell "su -c 'dd if=/dev/block/by-name/boot$(getprop ro.boot.slot_suffix) of=/sdcard/boot_backup.img'"`.
+  Without root, use the `boot.img` from the HyperOS fastboot ROM of the **exact** version you run.
+
+Flash the zip with one of:
+- the **KernelSU-Next manager** (or another KSU/Magisk manager): Install → select the zip
+- a custom recovery that supports amethyst
+- [Kernel Flasher](https://github.com/capntrips/KernelFlasher)
+
+Then reboot.
+
+Developers can also build a fastboot `boot.img` with `BOOT_IMG=1 scripts/build.sh pack`.
+
+**Check after boot**
+```
+adb shell uname -r                                   # ...-BluedMC-vX.Y
+adb shell cat /sys/kernel/bluedmc/features
+adb shell "su -c 'dmesg | grep -ciE \"disagrees about version|Unknown symbol|module verification failed\"'"   # 0
+adb shell "su -c 'lsmod | wc -l'"                    # about the same as before (≈494)
+```
+Then check Wi-Fi, mobile data, touch, fingerprint, charging, camera, audio and deep sleep.
+
+**Rollback:** in fastboot (Power + Volume down), run `fastboot flash boot boot_backup.img`, then `fastboot reboot`.
 
 ## Building
+Local (WSL2/Linux on ext4, ~60 GB free, 16 GB+ RAM; full LTO wants ~24 GB RAM+swap):
+```bash
+git clone https://github.com/BluedMC-Amethyst/kernel_xiaomi_amethyst bluedmc && cd bluedmc
+TOP=~/AmethystGKI/ws scripts/build.sh setup      # Kleaf workspace + kernel branch as common/
+TOP=~/AmethystGKI/ws scripts/build.sh all        # build -> KMI gate -> AnyKernel3 zip in dist/
+```
+Optional `BOOT_IMG=1` also makes a fastboot boot.img. `BOOT_TEMPLATE=<boot.img of your ROM>` copies that image's patch level and AVB props.
+`LTO=thin` builds faster.
 
-There is no build configuration or source tree in this checkout yet, so it cannot produce a kernel image. Once those are added, use the build instructions for the exact Android common kernel branch and toolchain used by that revision; GKI build commands and outputs vary by branch.
+GitHub Actions: **Actions → Build BluedMC kernel → Run workflow**. Give it a `release_tag` to publish a pre-release.
 
-## Installation and recovery
+### Making a new version
+The feature commits are produced by `scripts/bluedmc_features.sh`, starting from TechAmethyst's `v1.3` tag:
+```bash
+git -C $TOP/common checkout -B kernel v1.3       # TechAmethyst v1.3
+BMC_VER=v1.0 scripts/bluedmc_features.sh brand   # then build + gate after each stage
+scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt
+```
 
-There are no installation instructions for this project yet. Do not flash an image unless its release notes explicitly identify it as compatible with your device and firmware and provide installation and recovery steps.
+### KMI gate
+`tools/kmi_gate.sh` (from TechAmethyst) checks every symbol that every stock module imports against the new `Module.symvers`.
+`gate/stock-hyperos3/` holds the import list of the HyperOS 3.0 amethyst modules: vendor_boot 344, vendor_dlkm 311, system_dlkm 60, 38,942 imports.
+It has only symbol names, CRCs and module names, with no vendor code, so CI can gate without the stock images. To regenerate it:
+```
+tools/kmi_gate.sh --save gate/stock-hyperos3 vendor_boot=<dir> vendor_dlkm=<dir> system_dlkm=<dir>
+```
 
-Before installing any future release:
+## Repository layout
+| Branch | Content |
+|---|---|
+| `main` | scripts, tools, CI, gate data, changelogs |
+| `kernel` | full kernel source: TechAmethyst history + one BluedMC commit per feature |
 
-1. Confirm the device codename and firmware version match the release requirements.
-2. Keep a verified copy of the stock images needed to restore your device.
-3. Read the release notes and verify downloaded files against the published checksums.
-4. Follow only the installation and rollback procedure provided for that release.
+## Credits
+TechAmethyst by TheTechGuy69 · WildKernels (GKI_KernelSU_SUSFS, kernel_patches) · KernelSU-Next (rifsxd) and the pershoot fork · susfs4ksu (simonpunk) · Baseband-guard (vc-teahouse) · AnyKernel3 (osm0sis) · Google's Android Common Kernel and Kleaf.
 
-Unlocking a bootloader or flashing modified images can erase data, prevent the device from booting, or affect warranty coverage. Proceed only if you understand the recovery process.
+## License
+GPL-2.0. The kernel source of every release is on the `kernel` branch, tagged with the release version.
 
-## Disclaimer
-
-This project is unofficial and is not affiliated with Xiaomi. Use modified kernels at your own risk; no warranty is provided.
+No warranty. You flash at your own risk.
