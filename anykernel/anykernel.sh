@@ -28,18 +28,28 @@ no_magisk_check=1
 
 . tools/ak3-core.sh
 
-# device check: HyperOS build props say miproduct/mivendor/missi, so check what the bootloader
-# reports (ro.boot.hwname) first, then the usual product props
-amethyst_ok=0
-for p in ro.boot.hwname ro.product.device ro.product.odm.device ro.build.product ro.product.vendor.device; do
-  case "$(getprop $p 2>/dev/null)" in
-    *amethyst*) amethyst_ok=1; ui_print "Device: amethyst ($p)"; break;;
-  esac
+# device check. In a KSU-manager flash AnyKernel3 runs this under its own busybox with a changed PATH,
+# so call Android's getprop by full path and also read the prop files / bootconfig directly.
+# HyperOS build props say miproduct/mivendor/missi, so accept the codename from any source, or the
+# SoC (SM7635 "volcano").
+gp() { /system/bin/getprop "$1" 2>/dev/null || getprop "$1" 2>/dev/null; }
+seen=""
+for p in ro.boot.hwname ro.product.device ro.product.odm.device ro.product.mod_device ro.build.product \
+         ro.product.vendor.device ro.board.platform ro.soc.model ro.boot.hardware.sku; do
+  seen="$seen $p=$(gp $p)"
 done
-[ "$amethyst_ok" = 1 ] || abort "This kernel is only for the Redmi Note 14 Pro+ 5G (amethyst). Aborting..."
+for f in /odm/etc/build.prop /vendor/odm/etc/build.prop /vendor/build.prop; do
+  [ -f "$f" ] && seen="$seen $(grep -hE '^ro\.(product\.odm\.device|board\.platform)=' "$f" 2>/dev/null | tr '\n' ' ')"
+done
+seen="$seen $(cat /proc/bootconfig /proc/cmdline 2>/dev/null | grep -oE 'hwname[^ ]*' | head -1)"
+case "$seen" in
+  *amethyst*) ui_print "Device: amethyst";;
+  *volcano*|*SM7635*) ui_print "Device: SM7635 (volcano) - assuming amethyst";;
+  *) ui_print "Detected:$seen"; abort "This kernel is only for the Redmi Note 14 Pro+ 5G (amethyst). Aborting...";;
+esac
 
 # GKI 6.1 check (running kernel)
-case "$(uname -r)" in
+case "$(uname -r 2>/dev/null || cat /proc/sys/kernel/osrelease)" in
   6.1.*) ;;
   *) abort "Running kernel $(uname -r) is not android14-6.1 GKI. Aborting...";;
 esac
