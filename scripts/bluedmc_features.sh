@@ -14,6 +14,12 @@
 #   bbrv3    TCP BBRv3 (default congestion control)
 #   perf     WildKernels performance patch set
 #   opt      -mtune=cortex-a710 -O3 (+ full LTO at build time), see stage_opt
+#   lz4      LZ4 v1.10.0 + arm64 NEON decompressor (zram/f2fs/erofs), patches/lz4-1.10.0-arm64-neon-6.1.patch
+# opt-in (not in "all"):
+#   lean     drop some runtime hardening defaults for speed (init_on_alloc, kstack offset randomisation, KFENCE)
+#   version  re-brand an existing BluedMC tree to $BMC_VER
+#   clang18  build with AOSP clang r522817 (clang 18) and -mtune=cortex-a720 (experimental)
+#   autofdo  AutoFDO: compile with a sample profile, AFDO_PROFILE=<file> (experimental, see docs/AUTOFDO.md)
 #
 # usage: bluedmc_features.sh <stage>...      stages run in the order given; "all" = every stage in order
 # env:   TOP (Kleaf workspace, default ~/AmethystGKI/ws)  BMC_VER (default v1.0)
@@ -25,11 +31,12 @@ C=$TOP/common
 BMC_VER=${BMC_VER:-v1.0}
 BRAND=BluedMC
 KP=${KP:-$TOP/../kernel_patches}
+REPO=$(cd "$(dirname "$0")/.." && pwd)
 KP_REPO=${KP_REPO:-https://github.com/WildKernels/kernel_patches}
 BBG_REPO=${BBG_REPO:-https://github.com/vc-teahouse/Baseband-guard}
 BBG_REF=${BBG_REF:-48d9fde}
 DEFC=$C/arch/arm64/configs/gki_defconfig
-ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt)
+ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4)   # + opt-in: lean, version
 
 say(){ printf '\n\033[1;36m[BluedMC] %s\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31m[ERROR] %s\033[0m\n' "$*"; exit 1; }
@@ -228,6 +235,86 @@ PY
 
 clang r487747c has no cortex-a720 model, so the inherited cc-option
 -mtune=cortex-a720 was a no-op."
+}
+
+# ------------------------------------------------------------------------------------------------ lz4
+# LZ4 v1.10.0 (lib/lz4) + the arm64 NEON "lz4armv8" decompressor, ported to android14-6.1 by yuhangle
+# (github.com/yuhangle/Action_OneplusAce3v_SukiSU, 276937a6). HyperOS uses lz4 for zram, and this
+# code is built into the kernel. No stock vendor/system_dlkm module imports any LZ4 symbol (KMI-safe).
+# The NEON path only runs when may_use_simd(), stays 128 bytes away from both buffer ends, and
+# finishes with the bounds-checked C decoder.
+stage_lz4(){
+  say "lz4: v1.10.0 + arm64 NEON decompression"
+  apply "$REPO/patches/lz4-1.10.0-arm64-neon-6.1.patch"
+  add_feature lz4
+  commit "$BRAND: lz4 LZ4 v1.10.0 + arm64 NEON decompressor
+
+Port by yuhangle (Action_OneplusAce3v_SukiSU 276937a6) of upstream LZ4
+v1.10.0 and the lz4armv8 NEON decompressor. Used by zram (HyperOS: lz4),
+f2fs compression and incfs. No stock module imports LZ4 symbols."
+}
+
+# ------------------------------------------------------------------------------------------------ lean
+# Opt-in. Turns off runtime hardening *defaults* (no struct/ABI change; all are static keys or
+# boot defaults). Expected gain: <1% typical, up to ~3% in syscall/allocation-heavy loads.
+# Cost: no zero-on-alloc (uninitialised-memory leaks possible again), no per-syscall kernel stack
+# offset randomisation, no KFENCE sampling.
+stage_lean(){
+  say "lean: init_on_alloc off, kstack offset randomisation off, KFENCE off"
+  setcfg CONFIG_INIT_ON_ALLOC_DEFAULT_ON n
+  setcfg CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT n
+  setcfg CONFIG_KFENCE_SAMPLE_INTERVAL 0
+  add_feature lean
+  sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+)\"\$/\1-lean\"/" "$C/scripts/setlocalversion"
+  grep -q -- '-lean"$' "$C/scripts/setlocalversion" || die "could not add -lean suffix"
+  commit "$BRAND: lean drop init_on_alloc / kstack-offset / KFENCE defaults (opt-in)"
+}
+
+# ------------------------------------------------------------------------------------------------ version
+stage_version(){
+  say "version: -> $BMC_VER"
+  sed -i -E "s/^echo \"\\\$res-$BRAND-v[0-9.]+\"\$/echo \"\$res-$BRAND-$BMC_VER\"/" "$C/scripts/setlocalversion"
+  grep -q "^echo \"\\\$res-$BRAND-$BMC_VER\"\$" "$C/scripts/setlocalversion" || die "setlocalversion not updated"
+  sed -i -E "s/\"$BRAND v[0-9.]+\"/\"$BRAND $BMC_VER\"/" "$C/kernel/bluedmc.c"
+  grep -q "\"$BRAND $BMC_VER\"" "$C/kernel/bluedmc.c" || die "status node version not updated"
+  commit "$BRAND: version $BMC_VER"
+}
+
+# ------------------------------------------------------------------------------------------------ clang18
+# Experimental. AOSP clang r522817 (clang 18.0.1, the android15-6.6 GKI compiler) instead of r487747c
+# (17.0.2). Gains a real Cortex-A720 scheduling model. Symbol CRCs come from genksyms (source level) and
+# KCFI type hashes are stable across clang versions, so prebuilt vendor modules still match; the KMI gate
+# checks the CRCs. Needs prebuilts/clang/host/linux-x86/clang-r522817 + "r522817" in kleaf/versions.bzl
+# (scripts/build.sh setup_clang18 does both).
+stage_clang18(){
+  say "clang18: CLANG_VERSION=r522817, -mtune=cortex-a720"
+  grep -q '^CLANG_VERSION=r487747c$' "$C/build.config.constants" || die "unexpected CLANG_VERSION"
+  sed -i 's/^CLANG_VERSION=r487747c$/CLANG_VERSION=r522817/' "$C/build.config.constants"
+  sed -i 's/^KBUILD_CFLAGS += -mtune=cortex-a710$/KBUILD_CFLAGS += $(call cc-option,-mtune=cortex-a720,-mtune=cortex-a710)/' "$C/arch/arm64/Makefile"
+  grep -q 'mtune=cortex-a720,-mtune=cortex-a710' "$C/arch/arm64/Makefile" || die "tune line not updated"
+  add_feature clang18
+  sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+)\"\$/\1-clang18\"/" "$C/scripts/setlocalversion"
+  commit "$BRAND: clang18 build with AOSP clang r522817, -mtune=cortex-a720 (experimental)"
+}
+
+# ------------------------------------------------------------------------------------------------ autofdo
+# Experimental. Same flags as upstream scripts/Makefile.autofdo (Linux 6.13), minus
+# -fsplit-machine-functions (6.1's linker script has no .text.split.* placement).
+stage_autofdo(){
+  [ -f "${AFDO_PROFILE:-}" ] || die "AFDO_PROFILE=<sample profile> required (see docs/AUTOFDO.md)"
+  say "autofdo: $AFDO_PROFILE"
+  cp "$AFDO_PROFILE" "$C/bluedmc.afdo"
+  cat >> "$C/arch/arm64/Makefile" <<'MK'
+
+# BluedMC AutoFDO (sample profile from amethyst, see docs/AUTOFDO.md in the BluedMC repo)
+ifneq ($(wildcard $(srctree)/bluedmc.afdo),)
+KBUILD_CFLAGS += -fdebug-info-for-profiling -fprofile-sample-use=$(srctree)/bluedmc.afdo -ffunction-sections
+KBUILD_LDFLAGS += --lto-sample-profile=$(srctree)/bluedmc.afdo
+endif
+MK
+  add_feature autofdo
+  sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+[a-z0-9-]*)\"\$/\1-afdo\"/" "$C/scripts/setlocalversion"
+  commit "$BRAND: autofdo build with amethyst sample profile (experimental)"
 }
 
 stages=("$@"); [ ${#stages[@]} -eq 0 ] && die "usage: $0 <stage>... | all   (stages: ${ALL_STAGES[*]})"
