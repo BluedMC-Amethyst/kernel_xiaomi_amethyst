@@ -43,9 +43,12 @@ You need:
 - an unlocked bootloader
 - HyperOS with the 6.1.138 GKI kernel. The stock system_dlkm and vendor modules pass the KMI gate against this kernel.
 - the **stock init_boot**. KernelSU-Next is built into the kernel; a Magisk/KSU-LKM-patched init_boot conflicts with it.
-- a backup of your current boot. With root:
-  `adb shell "su -c 'dd if=/dev/block/by-name/boot$(getprop ro.boot.slot_suffix) of=/sdcard/boot_backup.img'"`.
-  Without root, use the `boot.img` from the HyperOS fastboot ROM of the **exact** version you run.
+- a backup of your current boot. With root (single quotes outside, so PowerShell and bash both pass `$(...)` through to the phone):
+  ```
+  adb shell 'su -c "dd if=/dev/block/by-name/boot$(getprop ro.boot.slot_suffix) of=/sdcard/boot_backup.img"'
+  adb pull /sdcard/boot_backup.img
+  ```
+  The file should be 100,663,296 bytes. Without root, use the `boot.img` from the HyperOS fastboot ROM of the **exact** version you run.
 
 Flash the zip with one of:
 - the **KernelSU-Next manager** (or another KSU/Magisk manager): Install → select the zip
