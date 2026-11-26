@@ -4,7 +4,7 @@
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 
-#define BLUEDMC_FEATURES "ksu susfs bbr ntfs3 wlblock tune"
+#define BLUEDMC_FEATURES "ksu susfs bbr ntfs3 wlblock tune tmpfs_xattr"
 
 static ssize_t version_show(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
