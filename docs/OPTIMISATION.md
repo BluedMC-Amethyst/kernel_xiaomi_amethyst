@@ -77,13 +77,13 @@ Nothing above should ship on "should be faster". Per candidate build:
 All four steps below are implemented:
 1. **v1.2**: LZ4 v1.10.0 + arm64 NEON decompressor (`lz4` stage), plus the opt-in `lean` stage (zip `-lean`)
 2. **clang18**: experimental build with AOSP clang r522817 and `-mtune=cortex-a720` (zip `-clang18`)
-3. **BluedMC Tuning** module (`module/`, `scripts/pack_module.sh`): stock / balanced / performance / battery
+3. ~~BluedMC Tuning module~~: dropped (not wanted). Section 4 stays as reference for manual tuning.
 4. **AutoFDO** tooling (`tools/afdo/`, `autofdo` stage, docs/AUTOFDO.md). It still needs a recording from the phone.
 
 ## Recommended roadmap
 1. **v1.2:** faster LZ4 (2a) plus an opt-in `lean` config stage (section 1). Benchmark against v1.1.
 2. **Experimental build:** clang 18/19 with `-mtune=cortex-a720` (2b). Boot-test, then benchmark.
-3. **Optional `BluedMC Tuning` KernelSU module:** conservative WALT, zram and read-ahead profile (section 4), with a battery/performance switch.
+3. ~~Tuning module~~: dropped.
 4. **Only then:** AutoFDO (section 3).
 
 ## Sources

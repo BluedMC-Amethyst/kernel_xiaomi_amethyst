@@ -1,6 +1,0 @@
-id=bluedmc_tuning
-name=BluedMC Tuning
-version=v1.0
-versionCode=1
-author=BluedMC
-description=amethyst (SM7635) WALT/memory/network profiles for BluedMC kernels. Use the action button to switch profile.

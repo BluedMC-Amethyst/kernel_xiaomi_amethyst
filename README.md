@@ -40,7 +40,6 @@ Opt-in variants (separate zips, experimental):
 | `clang18` | built with AOSP clang 18 (r522817) and a real `-mtune=cortex-a720` |
 | `autofdo` | profile-guided build from your own phone's kernel samples (docs/AUTOFDO.md) |
 
-**BluedMC Tuning** (KernelSU module, `module/`): WALT, memory and network profiles. Use the action button to cycle stock → balanced → performance → battery; `stock` restores every value it changed.
 
 About `-mtune`: the AOSP clang 17 that this branch pins has no Cortex-A720 model. TechAmethyst's `-mtune=cortex-a720` was therefore silently dropped. BluedMC tunes for the Cortex-A710, the A720's predecessor and the closest model available.
 This only changes instruction scheduling, not the instruction set.
