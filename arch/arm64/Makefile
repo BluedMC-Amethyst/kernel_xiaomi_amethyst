@@ -233,5 +233,7 @@ define archhelp
   echo  '                  install to $$(INSTALL_PATH) and run lilo'
 endef
 
-# TechAmethyst: tune instruction scheduling for SM7635 (Cortex-A720 + A520); ISA unchanged
-KBUILD_CFLAGS += $(call cc-option,-mtune=cortex-a720)
+# BluedMC: SM7635 (Cortex-A720 + A520). clang 17 has no cortex-a720 model -> tune for cortex-a710.
+# Scheduling only; ISA unchanged.
+KBUILD_CFLAGS += -mtune=cortex-a710
+KBUILD_CFLAGS += -O3
