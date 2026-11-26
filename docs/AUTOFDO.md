@@ -23,6 +23,10 @@ Typical gains on kernel-heavy work are a few percent. A bad profile can make thi
    adb pull /sdcard/bluedmc-afdo
    ```
    Only kernel-mode samples (`cpu-cycles:k`) are recorded, with no app data. The script restores `perf_event_paranoid` and `kptr_restrict` afterwards.
+   **Automated (larger, repeatable dataset):** also push `tools/afdo/afdo_workload.sh`, keep the phone unlocked on USB, and run
+   `adb shell 'su -c "sh /data/local/tmp/afdo_record.sh 1800 workload"'` (30 min).
+   The workload opens only allowlisted apps (Settings, Gallery, Clock, Calculator, Camera viewfinder, Notes, browser on fixed public pages, YouTube/Maps if installed). It only scrolls, never taps or types, and closes each app after use, so every launch is a cold start. Between app rounds it adds f2fs file I/O, EROFS reads and binder calls.
+   Several recordings can be merged by concatenating their `report_vaddr.txt` files, as long as they come from the same kernel, or by converting each against its own `vmlinux` and merging with `llvm-profdata merge --sample`.
 3. Make the profile (on the PC):
    ```
    tools/afdo/make_profile.sh bluedmc-afdo ~/AmethystGKI/ws138/out/v1.2
