@@ -157,4 +157,4 @@ $(obj)/kheaders_data.tar.xz: FORCE
 
 clean-files := kheaders_data.tar.xz kheaders.md5
 
-obj-y += techamethyst.o
+obj-y += bluedmc.o
