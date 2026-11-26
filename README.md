@@ -30,19 +30,18 @@ Added by BluedMC (one commit each on the `kernel` branch):
 | `bbg` | [Baseband Guard](https://github.com/vc-teahouse/Baseband-guard) LSM: blocks writes to critical partitions (modem, bootloaders, …) |
 | `bbrv3` | TCP BBRv3, now the default congestion control (BBR v1 is still available as `bbr`) |
 | `perf` | WildKernels performance patches (memcpy/memcmp/clear_page, f2fs/ext4/dcache tuning, log-spam cuts). The wakelock-timeout and freeze-timeout patches are left out. |
-| `opt` | `-O3`, full LTO, `-mtune=cortex-a710` |
+| `opt` | `-O3`, full LTO (CPU tuning: see `clang18`) |
 | `lz4` | LZ4 v1.10.0 + arm64 NEON decompressor (zram uses lz4 on HyperOS; port by yuhangle) |
+| `clang18` | built with AOSP clang 18 (r522817) and `-mtune=cortex-a720`. KCFI type hashes are identical to the clang 17 build, so vendor modules are unaffected. |
 
 Opt-in variants (separate zips, experimental):
 | Stage | What |
 |---|---|
 | `lean` | turns off `init_on_alloc`, kernel-stack offset randomisation and KFENCE defaults. Slightly faster, less hardened. |
-| `clang18` | built with AOSP clang 18 (r522817) and a real `-mtune=cortex-a720` |
 | `autofdo` | profile-guided build from your own phone's kernel samples (docs/AUTOFDO.md) |
 
 
-About `-mtune`: the AOSP clang 17 that this branch pins has no Cortex-A720 model. TechAmethyst's `-mtune=cortex-a720` was therefore silently dropped. BluedMC tunes for the Cortex-A710, the A720's predecessor and the closest model available.
-This only changes instruction scheduling, not the instruction set.
+About `-mtune`: the AOSP clang 17 that the 6.1 manifest pins has no Cortex-A720 model, so TechAmethyst's `-mtune=cortex-a720` was silently dropped. BluedMC v1.1 tuned for the A710 instead. Since v1.2, BluedMC builds with clang 18, which does have the A720 model. This only changes instruction scheduling, not the instruction set.
 
 ## Why 6.1.138 (the stock sublevel)
 On HyperOS, Xiaomi's prebuilt display driver (`msm_drm` / `mi_disp`) makes the screen **flicker or pulse** on newer GKI sublevels, even though every module loads cleanly.
@@ -89,8 +88,9 @@ Then check Wi-Fi, mobile data, touch, fingerprint, charging, camera, audio and d
 Local (WSL2/Linux on ext4, ~60 GB free, 16 GB+ RAM; full LTO wants ~24 GB RAM+swap):
 ```bash
 git clone https://github.com/BluedMC-Amethyst/kernel_xiaomi_amethyst bluedmc && cd bluedmc
-TOP=~/AmethystGKI/ws scripts/build.sh setup      # Kleaf workspace + kernel branch as common/
-TOP=~/AmethystGKI/ws scripts/build.sh all        # build -> KMI gate -> AnyKernel3 zip in dist/
+TOP=~/AmethystGKI/ws138 scripts/build.sh setup          # Kleaf workspace + kernel branch as common/
+TOP=~/AmethystGKI/ws138 scripts/build.sh setup_clang18  # AOSP clang 18 (r522817), registered with Kleaf
+TOP=~/AmethystGKI/ws138 scripts/build.sh all            # build -> KMI gate -> AnyKernel3 zip in dist/
 ```
 Optional `BOOT_IMG=1` also makes a fastboot boot.img. `BOOT_TEMPLATE=<boot.img of your ROM>` copies that image's patch level and AVB props.
 `LTO=thin` builds faster.
@@ -101,8 +101,8 @@ GitHub Actions: **Actions → Build BluedMC kernel → Run workflow**. Give it a
 The feature commits are produced by `scripts/bluedmc_features.sh`, starting from TechAmethyst's `v1.3` tag:
 ```bash
 git -C $TOP/common checkout -B kernel v1.2       # TechAmethyst v1.2 (6.1.138)
-BMC_VER=v1.1 scripts/bluedmc_features.sh brand   # then build + gate after each stage
-scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt
+BMC_VER=v1.2 scripts/bluedmc_features.sh brand   # then build + gate after each stage
+scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18
 ```
 
 ### KMI gate

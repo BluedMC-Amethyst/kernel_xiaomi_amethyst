@@ -15,10 +15,10 @@
 #   perf     WildKernels performance patch set
 #   opt      -mtune=cortex-a710 -O3 (+ full LTO at build time), see stage_opt
 #   lz4      LZ4 v1.10.0 + arm64 NEON decompressor (zram/f2fs/erofs), patches/lz4-1.10.0-arm64-neon-6.1.patch
+#   clang18  build with AOSP clang r522817 (clang 18.0.1) and -mtune=cortex-a720 (device-tested 2026-11-27)
 # opt-in (not in "all"):
 #   lean     drop some runtime hardening defaults for speed (init_on_alloc, kstack offset randomisation, KFENCE)
 #   version  re-brand an existing BluedMC tree to $BMC_VER
-#   clang18  build with AOSP clang r522817 (clang 18) and -mtune=cortex-a720 (experimental)
 #   autofdo  AutoFDO: compile with a sample profile, AFDO_PROFILE=<file> (experimental, see docs/AUTOFDO.md)
 #
 # usage: bluedmc_features.sh <stage>...      stages run in the order given; "all" = every stage in order
@@ -36,7 +36,7 @@ KP_REPO=${KP_REPO:-https://github.com/WildKernels/kernel_patches}
 BBG_REPO=${BBG_REPO:-https://github.com/vc-teahouse/Baseband-guard}
 BBG_REF=${BBG_REF:-48d9fde}
 DEFC=$C/arch/arm64/configs/gki_defconfig
-ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4)   # + opt-in: lean, version
+ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18)   # + opt-in: lean, version, autofdo
 
 say(){ printf '\n\033[1;36m[BluedMC] %s\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31m[ERROR] %s\033[0m\n' "$*"; exit 1; }
@@ -281,7 +281,7 @@ stage_version(){
 }
 
 # ------------------------------------------------------------------------------------------------ clang18
-# Experimental. AOSP clang r522817 (clang 18.0.1, the android15-6.6 GKI compiler) instead of r487747c
+# AOSP clang r522817 (clang 18.0.1, the android15-6.6 GKI compiler) instead of r487747c
 # (17.0.2). Gains a real Cortex-A720 scheduling model. Symbol CRCs come from genksyms (source level) and
 # KCFI type hashes are stable across clang versions, so prebuilt vendor modules still match; the KMI gate
 # checks the CRCs. Needs prebuilts/clang/host/linux-x86/clang-r522817 + "r522817" in kleaf/versions.bzl
@@ -293,8 +293,7 @@ stage_clang18(){
   sed -i 's/^KBUILD_CFLAGS += -mtune=cortex-a710$/KBUILD_CFLAGS += $(call cc-option,-mtune=cortex-a720,-mtune=cortex-a710)/' "$C/arch/arm64/Makefile"
   grep -q 'mtune=cortex-a720,-mtune=cortex-a710' "$C/arch/arm64/Makefile" || die "tune line not updated"
   add_feature clang18
-  sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+)\"\$/\1-clang18\"/" "$C/scripts/setlocalversion"
-  commit "$BRAND: clang18 build with AOSP clang r522817, -mtune=cortex-a720 (experimental)"
+  commit "$BRAND: clang18 build with AOSP clang r522817, -mtune=cortex-a720"
 }
 
 # ------------------------------------------------------------------------------------------------ autofdo

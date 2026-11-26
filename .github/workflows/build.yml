@@ -58,6 +58,9 @@ jobs:
       - name: Setup Kleaf workspace
         run: bash repo/scripts/build.sh setup
 
+      - name: Setup clang 18 (r522817)
+        run: bash repo/scripts/build.sh setup_clang18
+
       - name: Build
         run: JOBS=$(nproc) bash repo/scripts/build.sh build
 
