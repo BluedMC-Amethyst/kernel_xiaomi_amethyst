@@ -16,7 +16,8 @@ Typical gains on kernel-heavy work are a few percent. A bad profile can make thi
 
 ## Steps
 1. Run a BluedMC build on the phone, and keep its Kleaf dist dir (`vmlinux`, `System.map`).
-2. Record on the phone (root), using it normally for 5–10 minutes: apps, scrolling, camera, a game, Wi-Fi/data:
+2. **Easiest:** flash the KernelSU module (`tools/afdo/make_module.sh` builds `dist/BluedMC-AutoFDO-module-vX.zip`), reboot, and open its WebUI in KernelSU-Next. It starts and stops recordings (My usage or Automated, 15 min to 2 h), shows progress, lists and deletes sessions, and packs them all into a `.tar.gz` in Download. Stopping early keeps what was recorded.
+   By hand: record on the phone (root), using it normally for 5–10 minutes: apps, scrolling, camera, a game, Wi-Fi/data:
    ```
    adb push tools/afdo/afdo_record.sh /data/local/tmp/
    adb shell 'su -c "sh /data/local/tmp/afdo_record.sh 600"'

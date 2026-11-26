@@ -1,0 +1,6 @@
+id=bluedmc_afdo
+name=BluedMC AutoFDO recorder
+version=v1.0
+versionCode=1
+author=BluedMC
+description=Records kernel CPU samples for the BluedMC AutoFDO kernel build. Open the WebUI to start or stop a recording. Kernel addresses only, no app data.
