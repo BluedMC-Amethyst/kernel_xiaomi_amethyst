@@ -1,7 +1,7 @@
 # BluedMC kernel for amethyst
 
 GKI kernel for the **Redmi Note 14 Pro+ 5G (`amethyst`)**, SM7635 "volcano" (Snapdragon 7s Gen 3).
-It's built on [TechAmethyst](https://github.com/TheTechGuy69/techamethyst-kernel) v1.3 (android14-6.1-2026-06_r14, Linux 6.1.172), plus the [WildKernels](https://github.com/WildKernels/GKI_KernelSU_SUSFS) feature set and SM7635 compiler tuning.
+It's built on [TechAmethyst](https://github.com/TheTechGuy69/techamethyst-kernel) v1.2 (android14-6.1-2025-06_r17, Linux **6.1.138**, the same sublevel as stock), plus the [WildKernels](https://github.com/WildKernels/GKI_KernelSU_SUSFS) feature set and SM7635 compiler tuning.
 The KMI stays identical, so Xiaomi's prebuilt vendor modules keep loading. Every build is gated against the imports of the stock `.ko` files.
 
 > ⚠️ **Experimental.** A broken kernel means a boot loop. Keep a copy of the boot.img you run now, and an unlocked bootloader.
@@ -12,10 +12,10 @@ The KMI stays identical, so Xiaomi's prebuilt vendor modules keep loading. Every
 | Phone | Redmi Note 14 Pro+ 5G, `amethyst` |
 | SoC | SM7635 "volcano": 4× Cortex-A520 + 3× A720 + 1× prime A720 (all Armv9.2-A), Adreno 810 |
 | Stock kernel | `6.1.138-android14-11-g0c3d559bcd85` (HyperOS 3.0 vendor) |
-| BluedMC kernel | android14-6.1 GKI, Linux 6.1.172, KMI generation 11 |
+| BluedMC kernel | android14-6.1 GKI, Linux 6.1.138 (stock sublevel), KMI generation 11 |
 
 ## Features
-From TechAmethyst v1.3:
+From TechAmethyst v1.2:
 - **KernelSU-Next** (pershoot `dev-susfs`) built in, plus **SUSFS v2.x**. Use the **stock** init_boot, not a KSU-patched one.
 - TCP BBR, NTFS3, a wakelock blocker (`/sys/module/wakeup/parameters/ta_ws_block`), MGLRU, zram lzo-rle.
 
@@ -34,6 +34,12 @@ Added by BluedMC (one commit each on the `kernel` branch):
 
 About `-mtune`: the AOSP clang 17 that this branch pins has no Cortex-A720 model. TechAmethyst's `-mtune=cortex-a720` was therefore silently dropped. BluedMC tunes for the Cortex-A710, the A720's predecessor and the closest model available.
 This only changes instruction scheduling, not the instruction set.
+
+## Why 6.1.138 (the stock sublevel)
+On HyperOS, Xiaomi's prebuilt display driver (`msm_drm` / `mi_disp`) makes the screen **flicker or pulse** on newer GKI sublevels, even though every module loads cleanly.
+BluedMC v1.0 (6.1.172) showed this on amethyst, and WildKernels issues #140 (amethyst, 6.1.141) and #283 (Xiaomi 14, 6.1.176) report the same; building on 6.1.138 fixes it.
+A v1.0 test build without the `perf`/`opt` commits still flickered, so the sublevel jump is the cause, not BluedMC's additions.
+**Don't move BluedMC off 6.1.138 until Xiaomi ships a newer stock kernel.**
 
 ## Installing (HyperOS)
 Releases ship **one AnyKernel3 zip**: `BluedMC-vX.Y-amethyst-*.zip`, plus `SHA256SUMS` and `config.txt`.
@@ -85,8 +91,8 @@ GitHub Actions: **Actions → Build BluedMC kernel → Run workflow**. Give it a
 ### Making a new version
 The feature commits are produced by `scripts/bluedmc_features.sh`, starting from TechAmethyst's `v1.3` tag:
 ```bash
-git -C $TOP/common checkout -B kernel v1.3       # TechAmethyst v1.3
-BMC_VER=v1.0 scripts/bluedmc_features.sh brand   # then build + gate after each stage
+git -C $TOP/common checkout -B kernel v1.2       # TechAmethyst v1.2 (6.1.138)
+BMC_VER=v1.1 scripts/bluedmc_features.sh brand   # then build + gate after each stage
 scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt
 ```
 

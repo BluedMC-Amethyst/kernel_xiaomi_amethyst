@@ -19,7 +19,7 @@ OUT=${OUT:-$TOP/out/bluedmc}
 DIST=${DIST:-$REPO/dist}
 JOBS=${JOBS:-$(nproc)}
 LTO=${LTO:-full}
-MANIFEST_BRANCH=${MANIFEST_BRANCH:-common-android14-6.1-2026-06}
+MANIFEST_BRANCH=${MANIFEST_BRANCH:-common-android14-6.1-2025-06}   # 6.1.138 = stock sublevel
 KERNEL_REPO=${KERNEL_REPO:-https://github.com/BluedMC-Amethyst/kernel_xiaomi_amethyst}
 KERNEL_REF=${KERNEL_REF:-kernel}
 GATE=${GATE:-@$REPO/gate/stock-hyperos3}

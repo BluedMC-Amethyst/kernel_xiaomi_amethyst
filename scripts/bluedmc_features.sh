@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# bluedmc_features.sh - BluedMC kernel for amethyst: one git commit per feature on top of TechAmethyst v1.3
+# bluedmc_features.sh - BluedMC kernel for amethyst: one git commit per feature on top of TechAmethyst v1.2
 #
-# Base: TechAmethyst v1.3 = android14-6.1-2026-06_r14 (6.1.172) + KernelSU-Next + SUSFS + BBR + NTFS3
-#       + wakelock blocker + -mtune=cortex-a720.  https://github.com/TheTechGuy69/techamethyst-kernel (tag v1.3)
+# Base: TechAmethyst v1.2 = android14-6.1-2025-06_r17 (6.1.138, stock sublevel; 6.1.172/v1.3 flickers on HyperOS) + KernelSU-Next + SUSFS + BBR + NTFS3
+#       + wakelock blocker + -mtune=cortex-a720.  https://github.com/TheTechGuy69/techamethyst-kernel (tag v1.2)
 # BluedMC adds (each its own commit, each KMI-gated against the stock .ko files before it is kept):
 #   brand    -BluedMC-<ver> version string, /sys/kernel/bluedmc/{version,features}
 #   misc     tmpfs xattr + POSIX ACL
@@ -52,8 +52,8 @@ apply(){    # apply <patch> : must apply cleanly (no fuzz > default, no rejects)
 # ------------------------------------------------------------------------------------------------ brand
 stage_brand(){
   say "brand: -$BRAND-$BMC_VER"
-  grep -q '^echo "\$res-TechAmethyst-v1.3"$' "$C/scripts/setlocalversion" || die "setlocalversion: TechAmethyst suffix not found"
-  sed -i "s/^echo \"\\\$res-TechAmethyst-v1.3\"\$/echo \"\$res-$BRAND-$BMC_VER\"/" "$C/scripts/setlocalversion"
+  grep -qE '^echo "\$res-TechAmethyst-v[0-9.]+"$' "$C/scripts/setlocalversion" || die "setlocalversion: TechAmethyst suffix not found"
+  sed -i -E "s/^echo \"\\\$res-TechAmethyst-v[0-9.]+\"\$/echo \"\$res-$BRAND-$BMC_VER\"/" "$C/scripts/setlocalversion"
   git -C "$C" mv kernel/techamethyst.c kernel/bluedmc.c
   sed -i 's/^obj-y += techamethyst.o$/obj-y += bluedmc.o/' "$C/kernel/Makefile"
   python3 - "$C/kernel/bluedmc.c" "$BRAND $BMC_VER" <<'PY'
