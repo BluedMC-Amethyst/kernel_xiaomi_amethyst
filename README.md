@@ -105,7 +105,7 @@ tools/kmi_gate.sh --save gate/stock-hyperos3 vendor_boot=<dir> vendor_dlkm=<dir>
 | `kernel` | full kernel source: TechAmethyst history + one BluedMC commit per feature |
 
 ## Credits
-TechAmethyst by TheTechGuy69 · WildKernels (GKI_KernelSU_SUSFS, kernel_patches) · KernelSU-Next (rifsxd) and the pershoot fork · susfs4ksu (simonpunk) · Baseband-guard (vc-teahouse) · AnyKernel3 (osm0sis) · Google's Android Common Kernel and Kleaf.
+TechAmethyst by TheTechGuy69 · WildKernels (GKI_KernelSU_SUSFS, kernel_patches) · KernelSU-Next (rifsxd) and the pershoot fork · susfs4ksu (simonpunk) · Baseband-guard (vc-teahouse) · AnyKernel3 (osm0sis; arm64 tools from WildKernels/AnyKernel3) · Google's Android Common Kernel and Kleaf.
 
 ## License
 GPL-2.0. The kernel source of every release is on the `kernel` branch, tagged with the release version.

@@ -23,6 +23,7 @@ MANIFEST_BRANCH=${MANIFEST_BRANCH:-common-android14-6.1-2026-06}
 KERNEL_REPO=${KERNEL_REPO:-https://github.com/BluedMC-Amethyst/kernel_xiaomi_amethyst}
 KERNEL_REF=${KERNEL_REF:-kernel}
 GATE=${GATE:-@$REPO/gate/stock-hyperos3}
+AK3_REF=${AK3_REF:-e1e9dce}   # WildKernels/AnyKernel3 gki-2.0
 say(){ printf '\n\033[1;36m[BluedMC] %s\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31m[ERROR] %s\033[0m\n' "$*"; exit 1; }
 
@@ -73,10 +74,16 @@ stage_pack(){
     TOP=$TOP bash "$REPO/tools/pack_boot.sh" "$OUT/Image" "$DIST/boot.img" ${BOOT_TEMPLATE:-}
   fi
 
-  local A=$TOP/out/AnyKernel3 Z=$TOP/out/ak3
-  [ -d "$A/.git" ] || git clone -q --depth 1 https://github.com/osm0sis/AnyKernel3 "$A"
+  # WildKernels' AnyKernel3 fork: arm64 busybox/magiskboot. SM7635 has no AArch32 userspace, so
+  # upstream osm0sis AnyKernel3 (32-bit ARM tools) aborts with "Busybox setup failed".
+  local A=$TOP/out/AnyKernel3-wild Z=$TOP/out/ak3
+  if [ ! -d "$A/.git" ]; then
+    git clone -q -b gki-2.0 https://github.com/WildKernels/AnyKernel3.git "$A"
+  fi
+  git -C "$A" checkout -q "$AK3_REF"
   rm -rf "$Z"; mkdir -p "$Z"; cp -r "$A"/. "$Z"/
-  rm -rf "$Z/.git" "$Z/.github" "$Z/README.md" "$Z/ramdisk" "$Z/patch" "$Z/modules"
+  rm -rf "$Z/.git" "$Z/.github" "$Z/README.md" "$Z/ramdisk" "$Z/patch" "$Z/modules" "$Z/banner"
+  file -b "$Z/tools/busybox" | grep -q 'aarch64' || die "AnyKernel3 busybox is not arm64"
   sed "s/@VER@/$ver/; s/@REL@/$rel/" "$REPO/anykernel/anykernel.sh" > "$Z/anykernel.sh"
   cp "$OUT/Image" "$Z/Image"
   local zip="BluedMC-$ver-amethyst-$(date -u +%Y%m%d).zip"
