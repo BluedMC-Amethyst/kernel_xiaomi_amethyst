@@ -86,7 +86,44 @@ All four steps below are implemented:
 3. ~~Tuning module~~: dropped.
 4. **Only then:** AutoFDO (section 3).
 
+## Round 2 research (2026-11-27)
+
+### Correction: zram probably doesn't use lz4 on amethyst
+- The vendor script only sets `lz4` when `ro.config.low_ram=true`, which a 12 GB phone isn't.
+- HyperOS also disables that path (`vendor.zram.disable=1`). Zram is set up by Xiaomi's `system_ext/xbin/system_perf_init` from `perfinit_bdsize_zram.conf`, which sets size (12 GB) and flash writeback (4–6 GB), but **no compressor**.
+- So zram most likely runs the stock module default, `lzo-rle`, and v1.2's LZ4/NEON speed-up then only helps f2fs/EROFS/incfs.
+- **To verify on device:** `cat /sys/block/zram0/comp_algorithm`
+- If it is lzo-rle, switching to lz4 is the biggest remaining win: faster decompression on every swap-in, now with NEON. The compressor must be written before `system_perf_init` sets `disksize` (it runs "after load_persist_props, before zygote"). A one-line `post-fs-data` script would do it.
+- zram.ko is a stock module, so the kernel can't change its compiled-in default.
+
+### Lazy RCU is compiled in but probably inactive
+- `CONFIG_RCU_LAZY=y` and `CONFIG_RCU_NOCB_CPU=y`, but lazy batching only applies to CPUs offloaded with `rcu_nocbs=`. Neither the device tree nor vendor_boot's bootconfig sets it.
+- Upstream patches cite ~5–10% of idle/light-load power going to RCU work; Android and ChromeOS were the intended users.
+- The GKI config has `CONFIG_CMDLINE_EXTEND=y`, so BluedMC can append `rcu_nocbs=0-7` to its built-in command line with no vendor change.
+- **To verify on device:** `cat /proc/cmdline` (the Qualcomm bootloader may already add it).
+
+### KASAN (MTE hardware tags) is compiled in
+- `CONFIG_KASAN_HW_TAGS=y`. The A720/A520 support MTE. If the firmware enables MTE, KASAN tag checking runs on every allocation, at a real cost.
+- **To verify on device:** `dmesg | grep -i kasan` and `grep -c mte /proc/cpuinfo`
+- If it's active, `kasan=off` on the built-in command line is a sizeable win.
+
+### Checked and rejected
+| Idea | Why not |
+|---|---|
+| f2fs-stable backport | Its 6.1 branch stopped at 6.9-rc1 (March 2024), and the Android tree already has newer f2fs fixes of its own (e.g. `lookup_mode`). f2fs holds userdata, so a swap risks data loss for no proven gain. |
+| `mitigations=off` | The A520 is Spectre-BHB safe; the A720 runs a 38-iteration BHB-clearing loop per kernel entry (≈1–2% on syscall-heavy loads). Removing it lets apps attack kernel memory. A worse trade than `lean`. |
+| SCHED_CLUSTER, CFS/EEVDF changes | Task placement is WALT's (vendor module), so CFS tuning is bypassed |
+| mTHP / CONTPTE / per-VMA-lock backports | Change KMI structs (`mm_struct`, `vm_area_struct`, `zone`), and per-VMA locks are already in this tree |
+
+### Low priority
+- **MLGO register allocation** (`-mllvm -regalloc-enable-advisor=release`, works with clang 18): 0.3–1.5% on Google datacenter code, no kernel/arm64 data, and the model was trained on x86. Try only with benchmarks.
+- **Newer clang (19/20):** marginal over 18.
+- **AutoFDO:** tooling is ready (docs/AUTOFDO.md) and needs one phone recording. Still the largest compiler-side gain available.
+
 ## Sources
+- Lazy RCU: https://lkml.org/lkml/2022/11/30/945 , https://lpc.events/event/16/contributions/1204/attachments/985/2008/Make%20RCU%20do%20less%20(and%20later)!%20(3).pdf , https://android.googlesource.com/kernel/common/+/refs/heads/android-mainline/kernel/rcu/Kconfig
+- MLGO: https://www.research.google/blog/mlgo-a-machine-learning-framework-for-compiler-optimization/ , https://www.llvm.org/devmtg/2025-04/slides/quick_talk/grossman_accurate_runtime.pdf
+- f2fs-stable: https://git.kernel.org/pub/scm/linux/kernel/git/jaegeuk/f2fs-stable.git (linux-6.1.y)
 - Android zero-initialised memory (GKI defaults): https://source.android.com/docs/security/memory-safety/zero-initialized-memory
 - init_on_alloc overhead discussion (upstream): https://lore.kernel.org/linux-mm/201905161714.A53D472D9@keescook/ , https://kernsec.org/pipermail/linux-security-module-archive/2019-June/014813.html
 - SM7635 hardware: https://wiki.postmarketos.org/wiki/Qualcomm_Snapdragon_7s_Gen_3_(SM7635)
