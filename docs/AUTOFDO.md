@@ -8,6 +8,12 @@ Typical gains on kernel-heavy work are a few percent. A bad profile can make thi
 - So BluedMC uses **plain CPU-cycle samples**, like Google AutoFDO's sample-only mode. `tools/afdo/afdo_convert.py` maps each sampled kernel address to its function, source line and inline chain with `llvm-symbolizer`. It takes the max count per source line and writes an LLVM sample profile.
 - 6.1 has no `CONFIG_AUTOFDO_CLANG` (that's 6.13+). The `autofdo` stage adds the same compiler and linker flags upstream uses (`-fdebug-info-for-profiling -fprofile-sample-use … --lto-sample-profile`), minus `-fsplit-machine-functions`, which 6.1's linker script can't place.
 
+## Sample skid on amethyst (handled by the converter)
+- Without pseudo-NMI (`irqchip.gicv3_pseudo_nmi` isn't on the bootloader command line), the PMU interrupt can't fire while the kernel has IRQs masked.
+- Samples from IRQs-off code are counted at the instruction that unmasks them. In the first recording (10.4M samples, 10 minutes of normal use), about 45% landed on `finish_task_switch` and `_raw_spin_unlock_irqrestore`/`_irq`, and about 20% on idle (`cpuidle_enter_state`).
+- `afdo_convert.py` therefore drops idle samples (`--exclude-funcs`) and caps every address at the 99.9th percentile (`--clamp-pct`), so those few artefact addresses can't dominate the profile.
+- After that, the hottest code is what you'd expect from Android: fd lookup, VMA walks, page faults, binder, slab, SELinux AVC, epoll.
+
 ## Steps
 1. Run a BluedMC build on the phone, and keep its Kleaf dist dir (`vmlinux`, `System.map`).
 2. Record on the phone (root), using it normally for 5–10 minutes: apps, scrolling, camera, a game, Wi-Fi/data:

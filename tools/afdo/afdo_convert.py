@@ -111,6 +111,12 @@ def main():
     ap.add_argument("--report", required=True); ap.add_argument("--kallsyms")
     ap.add_argument("--symbolizer", required=True); ap.add_argument("--profdata", required=True)
     ap.add_argument("--out", required=True); ap.add_argument("--min-count", type=int, default=2)
+    ap.add_argument("--exclude-funcs", default="cpuidle_enter_state,cpu_do_idle,arch_cpu_idle,default_idle_call,do_idle,psci_cpu_suspend_enter,cpu_suspend",
+                    help="top-level functions whose samples are dropped (idle = not work)")
+    ap.add_argument("--clamp-pct", type=float, default=99.9,
+                    help="cap each address at this percentile of all address counts. Without pseudo-NMI, "
+                         "arm64 PMU samples taken with IRQs masked pile up at the IRQ-enable instruction "
+                         "(finish_task_switch, *_unlock_irqrestore), so a few addresses would otherwise dominate. 0 = off")
     a = ap.parse_args()
     sysmap = read_sysmap(a.sysmap)
     samples = read_samples(a.report)
@@ -123,6 +129,21 @@ def main():
     total = sum(samples.values())
     print("samples: %d at %d addresses (KASLR offset 0x%x)" % (total, len(samples), off & (2**64 - 1)))
     syms = symbolize(a.symbolizer, a.vmlinux, sorted(samples))
+    excl = set(f for f in a.exclude_funcs.split(",") if f)
+    def top(addr):
+        fr = [f for f in syms.get(addr, []) if f.get("FunctionName") not in (None, "", "??")]
+        return fr[-1]["FunctionName"] if fr else None
+    dropped = sum(c for k, c in samples.items() if top(k) in excl)
+    samples = collections.Counter({k: c for k, c in samples.items() if top(k) not in excl})
+    print("dropped %d idle samples (%.1f%%)" % (dropped, 100.0 * dropped / max(total, 1)))
+    if a.clamp_pct > 0 and samples:
+        vals = sorted(samples.values())
+        cap = vals[min(len(vals) - 1, int(len(vals) * a.clamp_pct / 100.0))]
+        clamped = [(k, c) for k, c in samples.items() if c > cap]
+        for k, c in clamped:
+            samples[k] = cap
+        print("clamped %d addresses to %d samples (p%.1f); largest were: %s" % (len(clamped), cap, a.clamp_pct,
+              ", ".join("%s=%d" % (top(k), c) for k, c in sorted(clamped, key=lambda kv: -kv[1])[:5])))
     funcs = {k: v for k, v in build(samples, syms).items() if v.total() >= a.min_count}
     txt = a.out + ".txt"
     with open(txt, "w") as fh:
