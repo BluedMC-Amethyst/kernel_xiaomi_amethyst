@@ -107,6 +107,16 @@ All four steps below are implemented:
 - **To verify on device:** `dmesg | grep -i kasan` and `grep -c mte /proc/cpuinfo`
 - If it's active, `kasan=off` on the built-in command line is a sizeable win.
 
+### Verified on device (v1.2, HyperOS 3.0.306, 2026-11-27)
+| Check | Result | Outcome |
+|---|---|---|
+| `/sys/block/zram0/comp_algorithm` | `lzo [lzo-rle] lz4 zstd` | **zram uses lzo-rle.** Switch it to lz4 (e.g. in a kernel manager app, set on boot) so v1.2's NEON LZ4 is used for swap. After a zram reset, Xiaomi's flash writeback device may not be re-attached. |
+| `/proc/cmdline` `rcu_nocbs` | `rcu_nocbs=0-7` from the Qualcomm bootloader | Lazy RCU is **already active**. Nothing to add. |
+| KASAN | bootloader passes `kasan=off`; `/proc/cpuinfo` has no `mte` | **Already off.** Nothing to gain. |
+| `rcupdate.rcu_expedited=1` | set by the bootloader, never reset by HyperOS/AOSP init | Expedited RCU stays on after boot: lower `synchronize_rcu()` latency, some power cost. Optional experiment only: `echo 0 > /sys/kernel/rcu_expedited` (root) and compare battery and smoothness. |
+
+Other bootloader parameters worth knowing about: `irqaffinity=0-3` (IRQs on the little cores), `kpti=0`, `cgroup.memory=nokmem,nosocket`, `ufshcd-core.use_mcq_mode=n` (the UFS 2.2 chip has no MCQ anyway).
+
 ### Checked and rejected
 | Idea | Why not |
 |---|---|
