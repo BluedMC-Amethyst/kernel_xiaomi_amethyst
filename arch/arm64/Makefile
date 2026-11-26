@@ -235,5 +235,5 @@ endef
 
 # BluedMC: SM7635 (Cortex-A720 + A520). clang 17 has no cortex-a720 model -> tune for cortex-a710.
 # Scheduling only; ISA unchanged.
-KBUILD_CFLAGS += -mtune=cortex-a710
+KBUILD_CFLAGS += $(call cc-option,-mtune=cortex-a720,-mtune=cortex-a710)
 KBUILD_CFLAGS += -O3
