@@ -31,6 +31,16 @@ Added by BluedMC (one commit each on the `kernel` branch):
 | `bbrv3` | TCP BBRv3, now the default congestion control (BBR v1 is still available as `bbr`) |
 | `perf` | WildKernels performance patches (memcpy/memcmp/clear_page, f2fs/ext4/dcache tuning, log-spam cuts). The wakelock-timeout and freeze-timeout patches are left out. |
 | `opt` | `-O3`, full LTO, `-mtune=cortex-a710` |
+| `lz4` | LZ4 v1.10.0 + arm64 NEON decompressor (zram uses lz4 on HyperOS; port by yuhangle) |
+
+Opt-in variants (separate zips, experimental):
+| Stage | What |
+|---|---|
+| `lean` | turns off `init_on_alloc`, kernel-stack offset randomisation and KFENCE defaults. Slightly faster, less hardened. |
+| `clang18` | built with AOSP clang 18 (r522817) and a real `-mtune=cortex-a720` |
+| `autofdo` | profile-guided build from your own phone's kernel samples (docs/AUTOFDO.md) |
+
+**BluedMC Tuning** (KernelSU module, `module/`): WALT, memory and network profiles. Use the action button to cycle stock → balanced → performance → battery; `stock` restores every value it changed.
 
 About `-mtune`: the AOSP clang 17 that this branch pins has no Cortex-A720 model. TechAmethyst's `-mtune=cortex-a720` was therefore silently dropped. BluedMC tunes for the Cortex-A710, the A720's predecessor and the closest model available.
 This only changes instruction scheduling, not the instruction set.

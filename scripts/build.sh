@@ -5,6 +5,7 @@
 #   scripts/build.sh build     bazel build //common:kernel_aarch64_dist
 #   scripts/build.sh gate      KMI gate: every stock module import vs the new Module.symvers  (bootloop gate)
 #   scripts/build.sh pack      AnyKernel3 zip + SHA256SUMS  (BOOT_IMG=1 also makes a fastboot boot.img)
+#   scripts/build.sh setup_clang18   fetch AOSP clang r522817 + register it with Kleaf (for the clang18 stage)
 #   scripts/build.sh all       build gate pack     (setup is separate)
 #
 # env: TOP=~/AmethystGKI/ws  OUT=$TOP/out/bluedmc  DIST=$REPO/dist  JOBS=$(nproc)  LTO=full|thin|default
@@ -46,6 +47,18 @@ EOF
   # Kleaf stamp: no "-maybe-dirty" in uname -r (same one-line edit TechAmethyst uses)
   sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" build/kernel/kleaf/impl/stamp.bzl
   say "source: $(git -C common log -1 --format='%h %s')"
+}
+
+stage_setup_clang18(){   # AOSP clang r522817 (clang 18.0.1) for the experimental clang18 stage
+  local P=$TOP/prebuilts/clang/host/linux-x86 v=r522817
+  if [ ! -x "$P/clang-$v/bin/clang" ]; then
+    say "download clang-$v"
+    mkdir -p "$P/clang-$v"
+    curl -sSfL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-$v.tar.gz" | tar xzf - -C "$P/clang-$v"
+  fi
+  grep -q "\"$v\"" "$P/kleaf/versions.bzl" || sed -i "s/^    \"r487747c\",$/    \"r487747c\",\n    \"$v\",/" "$P/kleaf/versions.bzl"
+  grep -q "\"$v\"" "$P/kleaf/versions.bzl" || die "could not register clang $v with Kleaf"
+  "$P/clang-$v/bin/clang" --version | head -1
 }
 
 stage_build(){
@@ -97,7 +110,7 @@ stage_pack(){
 [ $# -gt 0 ] || set -- all
 for s in "$@"; do
   case $s in
-    setup|build|gate|pack) "stage_$s";;
+    setup|setup_clang18|build|gate|pack) "stage_$s";;
     all) stage_build; stage_gate; stage_pack;;
     *) die "usage: $0 [setup|build|gate|pack|all]";;
   esac

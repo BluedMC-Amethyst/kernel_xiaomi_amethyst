@@ -56,7 +56,7 @@ Proposal: ship these as an opt-in `lean` stage, so the default build keeps Googl
 ## 4. Userspace tuning (biggest visible impact, no kernel risk)
 A KernelSU module (`service.sh`) can retune what Xiaomi's vendor scripts set at boot, for example in `init.kernel.post_boot-volcano_default_4_3_1.sh`:
 - **WALT** (`/proc/sys/walt/*`):
-  - `sched_fmax_cap` (stock writes `1708800 2208000 …`, which looks like a cap on the silver and gold clusters below their maximum clocks)
+  - `sched_fmax_cap` (stock writes `1708800 2208000 2147483647`). Correction: Xiaomi's script comment says this caps silver and gold only **"when load is not detected"**; the prime core is uncapped. It's a light-load efficiency cap, not a performance ceiling, so lifting it mostly costs battery.
   - `sched_upmigrate` / `sched_downmigrate`
   - input boost frequency and duration
   - `sched_util_busy_hyst_*`
@@ -72,6 +72,13 @@ Nothing above should ship on "should be faster". Per candidate build:
 - app-switching time with the same app set (zram path)
 - 30-minute screen-off drain, and 1 hour of mixed use
 - `dmesg` module-error check (must stay 0)
+
+## Status (2026-11-26)
+All four steps below are implemented:
+1. **v1.2**: LZ4 v1.10.0 + arm64 NEON decompressor (`lz4` stage), plus the opt-in `lean` stage (zip `-lean`)
+2. **clang18**: experimental build with AOSP clang r522817 and `-mtune=cortex-a720` (zip `-clang18`)
+3. **BluedMC Tuning** module (`module/`, `scripts/pack_module.sh`): stock / balanced / performance / battery
+4. **AutoFDO** tooling (`tools/afdo/`, `autofdo` stage, docs/AUTOFDO.md). It still needs a recording from the phone.
 
 ## Recommended roadmap
 1. **v1.2:** faster LZ4 (2a) plus an opt-in `lean` config stage (section 1). Benchmark against v1.1.
