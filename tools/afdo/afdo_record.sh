@@ -32,7 +32,7 @@ st(){ printf 'pid=%s\nphase=%s\nstart=%s\ndur=%s\nmode=%s\nfreq=%s\nout=%s\nsp=%
 st starting
 old_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)
 old_kptr=$(cat /proc/sys/kernel/kptr_restrict)
-setprop security.perf_harden 0
+setprop security.perf_harden 0 </dev/null >/dev/null 2>&1
 echo -1 > /proc/sys/kernel/perf_event_paranoid
 echo 0 > /proc/sys/kernel/kptr_restrict
 uname -r > $OUT/uname.txt
@@ -54,7 +54,8 @@ SP=$!; st recording
 wait $SP
 if [ -n "$WLP" ] && kill -0 $WLP 2>/dev/null; then      # stopped early: end the workload too
   kill $WLP 2>/dev/null; pkill -f afdo_workload.sh 2>/dev/null
-  rm -rf /data/local/tmp/bmc_wl; svc power stayon false; input keyevent KEYCODE_HOME
+  rm -rf /data/local/tmp/bmc_wl
+  svc power stayon false </dev/null >/dev/null 2>&1; input keyevent KEYCODE_HOME </dev/null >/dev/null 2>&1
 fi
 wait
 ELAPSED=$(( $(date +%s) - START ))

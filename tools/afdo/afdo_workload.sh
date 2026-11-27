@@ -7,11 +7,15 @@ MIN=${1:-30}
 END=$(( $(date +%s) + MIN * 60 ))
 T=/data/local/tmp/bmc_wl
 log(){ echo "[wl $(date +%H:%M:%S)] $*"; }
+# input/am/svc/cmd pass their stdio to system_server over binder. When started from the KernelSU WebUI,
+# stdout is a log file system_server may not open (-> "Failed transaction"), so always use /dev/null.
+q(){ "$@" </dev/null >/dev/null 2>&1; }
+exec </dev/null
 
 # screen: wake, keep awake while on USB, 120 Hz like normal use
-input keyevent KEYCODE_WAKEUP
-svc power stayon usb
-W=$(wm size | sed -n 's/.* \([0-9]*\)x\([0-9]*\)$/\1/p'); H=$(wm size | sed -n 's/.* [0-9]*x\([0-9]*\)$/\1/p')
+q input keyevent KEYCODE_WAKEUP
+q svc power stayon usb
+W=$(wm size 2>/dev/null </dev/null | sed -n 's/.* \([0-9]*\)x\([0-9]*\)$/\1/p'); H=$(wm size 2>/dev/null </dev/null | sed -n 's/.* [0-9]*x\([0-9]*\)$/\1/p')
 W=${W:-1220}; H=${H:-2712}; X=$((W/2)); Y1=$((H*3/4)); Y2=$((H/4))
 
 # allowlist (only those installed are used). No messaging, banking, social, payment or store apps.
@@ -24,7 +28,7 @@ for p in $ALLOW; do pm path "$p" >/dev/null 2>&1 && APPS="$APPS $p"; done
 log "apps: $APPS"
 URLS="https://en.wikipedia.org/wiki/Linux_kernel https://en.wikipedia.org/wiki/Android_(operating_system) https://www.kernel.org https://source.android.com https://en.wikipedia.org/wiki/ARM_architecture_family"
 
-scroll(){ i=0; while [ $i -lt $1 ]; do input swipe $X $Y1 $X $Y2 180; sleep 0.4; input swipe $X $Y2 $X $Y1 220; sleep 0.3; i=$((i+1)); done; }
+scroll(){ i=0; while [ $i -lt $1 ]; do q input swipe $X $Y1 $X $Y2 180; sleep 0.4; q input swipe $X $Y2 $X $Y1 220; sleep 0.3; i=$((i+1)); done; }
 
 app_round(){
   for p in $APPS; do
@@ -37,8 +41,8 @@ app_round(){
       *)
         monkey -p "$p" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1; sleep 2.5; scroll 5;;
     esac
-    input keyevent KEYCODE_BACK; sleep 0.5; input keyevent KEYCODE_HOME; sleep 0.5
-    am force-stop "$p"            # next launch is a cold start: page faults, file mapping, binder
+    q input keyevent KEYCODE_BACK; sleep 0.5; q input keyevent KEYCODE_HOME; sleep 0.5
+    q am force-stop "$p"            # next launch is a cold start: page faults, file mapping, binder
   done
 }
 
@@ -62,7 +66,7 @@ while [ $(date +%s) -lt $END ]; do
   n=$((n+1)); log "round $n"
   app_round; io_round; binder_round
 done
-input keyevent KEYCODE_HOME
-svc power stayon false
+q input keyevent KEYCODE_HOME
+q svc power stayon false
 rm -rf $T
 log "done after $n rounds"

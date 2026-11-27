@@ -18,8 +18,8 @@ W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 
 recs=()
 for a in "$@"; do
-  if [ -f "$a/report_vaddr.txt" ]; then recs+=("$a")
-  else for r in "$a"/*/; do [ -f "$r/report_vaddr.txt" ] && recs+=("${r%/}"); done; fi
+  [ -f "$a/report_vaddr.txt" ] && recs+=("$a")
+  for r in "$a"/*/; do [ -f "$r/report_vaddr.txt" ] && recs+=("${r%/}"); done
 done
 
 # pick the dist dir whose Image has the same uname -r and whose System.map has the same symbol offsets
