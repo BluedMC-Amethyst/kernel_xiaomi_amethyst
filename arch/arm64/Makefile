@@ -237,3 +237,9 @@ endef
 # Scheduling only; ISA unchanged.
 KBUILD_CFLAGS += $(call cc-option,-mtune=cortex-a720,-mtune=cortex-a710)
 KBUILD_CFLAGS += -O3
+
+# BluedMC AutoFDO (sample profile from amethyst, see docs/AUTOFDO.md in the BluedMC repo)
+ifneq ($(wildcard $(srctree)/bluedmc.afdo),)
+KBUILD_CFLAGS += -fdebug-info-for-profiling -fprofile-sample-use=$(srctree)/bluedmc.afdo -ffunction-sections
+KBUILD_LDFLAGS += --lto-sample-profile=$(srctree)/bluedmc.afdo
+endif
