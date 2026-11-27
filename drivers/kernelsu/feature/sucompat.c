@@ -79,15 +79,6 @@ static const struct ksu_feature_handler su_compat_handler = {
 	.set_handler = su_compat_feature_set,
 };
 
-static void __user *userspace_stack_buffer(const void *d, size_t len)
-{
-	// To avoid having to mmap a page in userspace, just write below the stack
-	// pointer.
-	char __user *p = (void __user *)current_user_stack_pointer() - len;
-
-	return copy_to_user(p, d, len) ? NULL : p;
-}
-
 static char __user *sh_user_path(void)
 {
 	static const char sh_path_local[] = "/system/bin/sh";
@@ -119,27 +110,6 @@ static bool is_ksud_exists()
 }
 
 #ifdef CONFIG_KSU_SUSFS
-static const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
-{
-	const char __user *native;
-
-#ifdef CONFIG_COMPAT
-	if (unlikely(argv.is_compat)) {
-		compat_uptr_t compat;
-
-		if (get_user(compat, argv.ptr.compat + nr))
-			return ERR_PTR(-EFAULT);
-
-		return compat_ptr(compat);
-	}
-#endif
-
-	if (get_user(native, argv.ptr.native + nr))
-		return ERR_PTR(-EFAULT);
-
-	return native;
-}
-
 static bool ksu_str_ends_with(const char *str, size_t str_len, const char *suffix)
 {
     size_t suffix_len = strlen(suffix);
@@ -225,7 +195,7 @@ int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *arg
 
 int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
                  void *argv_user, void *envp_user,
-                 int *__never_use_flags)
+                 int *flags)
 {
     struct filename *filename;
     struct user_arg_ptr *argv_ptr = (struct user_arg_ptr *)argv_user;
@@ -276,7 +246,7 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 
 int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
                  void *argv_user, void *envp_user,
-                 int *__never_use_flags, int *retval)
+                 int *flags, int *retval)
 {
     if (*retval >= 0) {
         (void)ksu_install_su_fd();

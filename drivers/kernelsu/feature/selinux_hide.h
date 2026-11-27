@@ -2,6 +2,7 @@
 #define __KSU_H_SELINUX_HIDE
 
 #include <linux/types.h>
+#include <linux/version.h>
 
 void ksu_selinux_hide_init();
 void ksu_selinux_hide_exit();
@@ -19,6 +20,9 @@ extern struct page *fake_status;
 struct static_key_false;
 extern struct static_key_false fake_status_initialize_key;
 
-struct selinux_state;
+struct file;
+ssize_t my_write_context(struct file *file, char *buf, size_t size);
+ssize_t my_write_access(struct file *file, char *buf, size_t size);
+int my_setprocattr(const char *name, void *value, size_t size);
 
 #endif

@@ -65,6 +65,41 @@ config KSU_X86_PATCH_SYSCALL_DISPATCHER
 	  Dynamically patch x64's hardened syscall dispatcher to support syscall hooks. This is a
 	  replacement for a kernel source code patch, and is useful for x86_64 LKM mode.
 
+config KSU_SAMSUNG_KDP
+	bool "Samsung KDP credential compatibility"
+	depends on KSU && ARM64
+	default y
+	help
+	  Use Samsung KDP helpers when they are present. Kernels without KDP
+	  helpers automatically use the standard credential APIs.
+
+config KSU_SAMSUNG_RKP
+	bool "Samsung RKP hook compatibility"
+	depends on KSU && ARM64 && KPROBES && KRETPROBES
+	default y
+	help
+	  Use kprobe-based syscall fallbacks on Samsung devices when patching
+	  the syscall-table dispatcher is blocked. Samsung devices are detected
+	  from the root device-tree compatible property. The fallback is not
+	  used when the syscall table or an unused syscall slot cannot be found.
+
+config KSU_SAMSUNG_DEFEX
+	bool "Samsung DEFEX credential compatibility"
+	depends on KSU && ARM64 && KPROBES
+	default y
+	help
+	  Synchronize task credentials and bypass duplicate enforcement when
+	  Samsung DEFEX helpers are present. Otherwise this option is a no-op.
+
+config KSU_SAMSUNG_NO_PATCH_TEXT
+	bool "Disable live kernel text/data patching on Samsung EL2"
+	depends on KSU && ARM64
+	default y
+	help
+	  Disable KernelSU's live patch helper on Samsung devices whose EL2
+	  protection rejects fixmap writes. Samsung devices are detected from
+	  the root device-tree compatible property; other devices are unaffected.
+
 menu "KernelSU - SUSFS"
 config KSU_SUSFS
 	bool "KernelSU addon - SUSFS"
@@ -153,6 +188,14 @@ config KSU_SUSFS_SUS_MAP
 	  - It does NOT hide any inline hooks or plt hooks cause by the injected library itself.
 	  - It may not be able to evade detections by apps that implement a good injection detection.
 	  - Effective only on zygote spawned umounted user app process >= 10000.
+
+config KSU_SUSFS_PRIORITY_UID_FILTER
+	bool "Enable to allow adding user-defined uids that will be hidden from getpriority/setpriority/ioprio_get/ioprio_set syscall"
+	depends on KSU_SUSFS
+	default y
+	help
+	  - Allow hiding user-defined uids from syscalls like getpriority/setpriority/ioprio_get/ioprio_set.
+	  - Effective on all processes with uid >= 10000.
 
 endmenu
 
