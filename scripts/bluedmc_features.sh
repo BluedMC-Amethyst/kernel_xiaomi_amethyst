@@ -18,6 +18,8 @@
 #   clang18  build with AOSP clang r522817 (clang 18.0.1) and -mtune=cortex-a720 (device-tested 2026-11-27)
 #   ksun     KernelSU-Next v3.4.2 + SUSFS v2.4.0 (replaces TechAmethyst's v3.4.1 + SUSFS v2.3.0)
 #   clang20  build with AOSP clang r547379 (clang 20.0.0, Android 16 release compiler)
+#   sukisu   variant: SukiSU Nova (builtin-new, SUSFS v2.4.0) instead of KernelSU-Next; on top of ksun.
+#            Adds -SukiSU to the version. Use the SukiSU Nova manager v3.0.0+. (not in "all")
 #   autofdo  AutoFDO with profiles/bluedmc.afdo (amethyst recordings; AFDO_PROFILE=<file> overrides,
 #            AFDO_SUFFIX=1 adds -afdo to the version for test builds), see docs/AUTOFDO.md
 # opt-in (not in "all"):
@@ -41,6 +43,9 @@ BBG_REF=${BBG_REF:-48d9fde}
 KSUN_REPO=${KSUN_REPO:-https://github.com/pershoot/KernelSU-Next}
 KSUN_REF=${KSUN_REF:-4776e7cd67663a532ca49ec9523cc6e9739d6cf2}   # dev-susfs 2026-11-14 = WildKernels r23
 KSUN_VERSION=${KSUN_VERSION:-33554}; KSUN_TAG=${KSUN_TAG:-v3.4.2}
+SUKI_REPO=${SUKI_REPO:-https://github.com/SukiSU-Nova/SukiSU-Nova}
+SUKI_REF=${SUKI_REF:-5a3ec4145059ed2c4f22c70a16a28a616e104c33}   # builtin-new 2026-11-16 (UAPI 6 = manager v3.0.0)
+SUKI_VERSION=${SUKI_VERSION:-30007}; SUKI_TAG=${SUKI_TAG:-v3.0.0}  # upstream formula: 30000 + main commits (4008) - 4001
 DEFC=$C/arch/arm64/configs/gki_defconfig
 ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun autofdo)   # + opt-in: lean, version
 
@@ -300,6 +305,39 @@ stage_clang18(){
   grep -q 'mtune=cortex-a720,-mtune=cortex-a710' "$C/arch/arm64/Makefile" || die "tune line not updated"
   add_feature clang18
   commit "$BRAND: clang18 build with AOSP clang r522817, -mtune=cortex-a720"
+}
+
+# ------------------------------------------------------------------------------------------------ sukisu
+# Replaces drivers/kernelsu (KernelSU-Next) with SukiSU Nova's in-kernel "builtin-new" line, which builds on
+# the same SUSFS v2.4.0 kernel hooks the ksun stage installs. Its Makefile asks the GitHub API and git for
+# the version at build time; that is replaced by fixed values so builds are offline and reproducible.
+stage_sukisu(){
+  say "sukisu: SukiSU Nova $SUKI_TAG (${SUKI_REF:0:8}, $SUKI_VERSION)"
+  grep -q 'SUSFS_VERSION "v2.4.0"' "$C/include/linux/susfs.h" || die "sukisu needs the ksun stage (SUSFS v2.4.0) first"
+  local k; k=$(mktemp -d)
+  git -C "$k" init -q && git -C "$k" fetch -q --depth 1 "$SUKI_REPO" "$SUKI_REF" || die "fetch $SUKI_REPO $SUKI_REF"
+  rm -rf "$C/drivers/kernelsu" && mkdir "$C/drivers/kernelsu"
+  git -C "$k" archive FETCH_HEAD kernel | tar -x -C "$C/drivers/kernelsu" --strip-components=1
+  rm -rf "$k"
+  python3 - "$C/drivers/kernelsu/Makefile" "$SUKI_VERSION" "$SUKI_TAG-${SUKI_REF:0:8}@builtin-new" <<'PY'
+import re, sys
+p, ver, full = sys.argv[1:]
+s = open(p).read()
+a = s.index("git_short_sha    =")
+b = s.index("KSU_VERSION_FULL :=")
+b = s.index("\n", b) + 1
+s = s[:a] + "# BluedMC: fixed version (no git/GitHub API calls at build time)\nKSU_VERSION     := %s\nKSU_VERSION_FULL := %s\n" % (ver, full) + s[b:]
+assert "curl" not in s.split("$(info -- $(REPO_NAME) version")[0].split("BluedMC: fixed")[1]
+open(p, "w").write(s)
+PY
+  grep -q "^KSU_VERSION     := $SUKI_VERSION$" "$C/drivers/kernelsu/Makefile" || die "version not pinned"
+  for o in KDP RKP DEFEX NO_PATCH_TEXT; do sed -i "/CONFIG_KSU_SAMSUNG_$o/d" "$DEFC"; done   # KernelSU-Next only
+  setcfg CONFIG_KSU_SUSFS_INLINE_HOOK y
+  setcfg CONFIG_KPM n           # KPM needs a post-build Image patcher; not used
+  sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+)\"\$/\1-SukiSU\"/" "$C/scripts/setlocalversion"
+  grep -q -- "-SukiSU\"$" "$C/scripts/setlocalversion" || die "setlocalversion not updated"
+  sed -i 's/^#define BLUEDMC_FEATURES "ksu /#define BLUEDMC_FEATURES "sukisu /' "$C/kernel/bluedmc.c"
+  commit "$BRAND: sukisu SukiSU Nova $SUKI_TAG (${SUKI_REF:0:8}) instead of KernelSU-Next"
 }
 
 # ------------------------------------------------------------------------------------------------ clang20

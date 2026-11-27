@@ -83,7 +83,7 @@ stage_gate(){
 
 stage_pack(){
   local rel; rel=$(strings "$OUT/Image" | sed -n '/^Linux version [0-9]/{s/^Linux version \([^ ]*\) .*/\1/p;q}' || true)
-  local ver; ver=$(echo "$rel" | sed -n 's/.*-BluedMC-\(v[0-9.]*\).*/\1/p'); ver=${ver:-dev}
+  local ver; ver=$(echo "$rel" | sed -n 's/.*-BluedMC-\(v[0-9.]*[A-Za-z0-9.-]*\)$/\1/p'); ver=${ver:-dev}   # keeps variant suffixes (-SukiSU, -afdo)
   say "pack $rel"
   rm -rf "$DIST"; mkdir -p "$DIST"
   if [ "${BOOT_IMG:-0}" = 1 ]; then

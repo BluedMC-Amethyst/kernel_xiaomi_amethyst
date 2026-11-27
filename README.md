@@ -36,9 +36,10 @@ Added by BluedMC (one commit each on the `kernel` branch):
 | `ksun` | **KernelSU-Next v3.4.2** (pershoot `dev-susfs` 4776e7c, version 33554) + **SUSFS v2.4.0** (susfs4ksu f76b81f): the same pair as WildKernels r23. Adds SUSFS priority-UID filter. Use KernelSU-Next manager v3.4.2 or newer. |
 | `autofdo` | **AutoFDO**: compiled with a sample profile of real kernel use on amethyst (`profiles/bluedmc.afdo`, ~81M samples, ~6.5 h from two phones). See docs/AUTOFDO.md. |
 
-Opt-in variant (separate zip, experimental):
+Opt-in variants (separate zips, experimental):
 | Stage | What |
 |---|---|
+| `sukisu` | **SukiSU Nova** (`builtin-new`, built in, SUSFS v2.4.0) instead of KernelSU-Next. `uname -r` ends in `-SukiSU`. Use the SukiSU Nova manager v3.0.0+. No KPM. |
 | `lean` | turns off `init_on_alloc`, kernel-stack offset randomisation and KFENCE defaults. Slightly faster, less hardened. |
 
 
