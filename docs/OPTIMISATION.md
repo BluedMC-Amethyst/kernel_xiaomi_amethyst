@@ -139,3 +139,9 @@ Other bootloader parameters worth knowing about: `irqaffinity=0-3` (IRQs on the 
 - SM7635 hardware: https://wiki.postmarketos.org/wiki/Qualcomm_Snapdragon_7s_Gen_3_(SM7635)
 - amethyst storage bottleneck: https://m.gsmarena.com/xiaomi_redmi_note_14_pro_plus-review-2788p4.php
 - Local evidence: stock module list (~/AndroidBuilds/EvolutionX/device/xiaomi/amethyst-kernel/modules), HyperOS `vendor/bin/init.kernel.post_boot-*.sh` and `init.kernel.post_boot-memory.sh`, BluedMC v1.1 `config.txt`, clang r487747c `--print-supported-cpus` (no cortex-a720).
+
+## Tried and dropped: -march=armv9.2-a (2026-11-28)
+Built with clang 20 and `-march=armv9.2-a+nopauth`: the generated code is identical to the default target
+(7,023,196 instructions, same opcode histogram). The kernel is compiled with `-mgeneral-regs-only` (no
+FP/SIMD/SVE), and it already emits LSE atomics, RCpc loads and CRC32 through its own runtime-patched
+assembly, so a newer -march has nothing left to change.

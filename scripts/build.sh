@@ -2,6 +2,7 @@
 # build.sh - build, KMI-gate and package the BluedMC kernel (local WSL and GitHub Actions)
 #
 #   scripts/build.sh setup     repo init/sync the Kleaf workspace + clone the BluedMC kernel source as common/
+#   scripts/build.sh setup_clang20   AOSP clang r547379 (clang 20) for the clang20 stage
 #   scripts/build.sh build     bazel build //common:kernel_aarch64_dist
 #   scripts/build.sh gate      KMI gate: every stock module import vs the new Module.symvers  (bootloop gate)
 #   scripts/build.sh pack      AnyKernel3 zip + SHA256SUMS  (BOOT_IMG=1 also makes a fastboot boot.img)
@@ -49,8 +50,8 @@ EOF
   say "source: $(git -C common log -1 --format='%h %s')"
 }
 
-stage_setup_clang18(){   # AOSP clang r522817 (clang 18.0.1) for the experimental clang18 stage
-  local P=$TOP/prebuilts/clang/host/linux-x86 v=r522817
+setup_clang(){   # setup_clang <rNNNNNN>: download an AOSP clang prebuilt and register it with Kleaf
+  local P=$TOP/prebuilts/clang/host/linux-x86 v=$1
   if [ ! -x "$P/clang-$v/bin/clang" ]; then
     say "download clang-$v"
     mkdir -p "$P/clang-$v"
@@ -60,6 +61,8 @@ stage_setup_clang18(){   # AOSP clang r522817 (clang 18.0.1) for the experimenta
   grep -q "\"$v\"" "$P/kleaf/versions.bzl" || die "could not register clang $v with Kleaf"
   "$P/clang-$v/bin/clang" --version | head -1
 }
+stage_setup_clang18(){ setup_clang r522817; }   # AOSP clang 18.0.1 (v1.2-v1.3)
+stage_setup_clang20(){ setup_clang r547379; }   # AOSP clang 20.0.0 (Android 16 release compiler)
 
 stage_build(){
   say "build (lto=$LTO, jobs=$JOBS) -> $OUT"
@@ -110,8 +113,8 @@ stage_pack(){
 [ $# -gt 0 ] || set -- all
 for s in "$@"; do
   case $s in
-    setup|setup_clang18|build|gate|pack) "stage_$s";;
+    setup|setup_clang18|setup_clang20|build|gate|pack) "stage_$s";;
     all) stage_build; stage_gate; stage_pack;;
-    *) die "usage: $0 [setup|build|gate|pack|all]";;
+    *) die "usage: $0 [setup|setup_clang18|setup_clang20|build|gate|pack|all]";;
   esac
 done

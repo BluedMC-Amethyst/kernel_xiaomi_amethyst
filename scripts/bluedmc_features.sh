@@ -17,6 +17,7 @@
 #   lz4      LZ4 v1.10.0 + arm64 NEON decompressor (zram/f2fs/erofs), patches/lz4-1.10.0-arm64-neon-6.1.patch
 #   clang18  build with AOSP clang r522817 (clang 18.0.1) and -mtune=cortex-a720 (device-tested 2026-11-27)
 #   ksun     KernelSU-Next v3.4.2 + SUSFS v2.4.0 (replaces TechAmethyst's v3.4.1 + SUSFS v2.3.0)
+#   clang20  build with AOSP clang r547379 (clang 20.0.0, Android 16 release compiler)
 #   autofdo  AutoFDO with profiles/bluedmc.afdo (amethyst recordings; AFDO_PROFILE=<file> overrides,
 #            AFDO_SUFFIX=1 adds -afdo to the version for test builds), see docs/AUTOFDO.md
 # opt-in (not in "all"):
@@ -299,6 +300,16 @@ stage_clang18(){
   grep -q 'mtune=cortex-a720,-mtune=cortex-a710' "$C/arch/arm64/Makefile" || die "tune line not updated"
   add_feature clang18
   commit "$BRAND: clang18 build with AOSP clang r522817, -mtune=cortex-a720"
+}
+
+# ------------------------------------------------------------------------------------------------ clang20
+# Needs prebuilts/clang/host/linux-x86/clang-r547379 registered with Kleaf (scripts/build.sh setup_clang20).
+stage_clang20(){
+  say "clang20: CLANG_VERSION=r547379"
+  grep -q '^CLANG_VERSION=r522817$' "$C/build.config.constants" || die "clang20 goes on top of clang18 (CLANG_VERSION=r522817)"
+  sed -i 's/^CLANG_VERSION=r522817$/CLANG_VERSION=r547379/' "$C/build.config.constants"
+  add_feature clang20
+  commit "$BRAND: clang20 build with AOSP clang r547379 (clang 20.0.0)"
 }
 
 # ------------------------------------------------------------------------------------------------ autofdo
