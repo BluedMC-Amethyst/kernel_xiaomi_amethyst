@@ -34,15 +34,27 @@ Added by BluedMC (one commit each on the `kernel` branch):
 | `lz4` | LZ4 v1.10.0 + arm64 NEON decompressor (zram uses lz4 on HyperOS; port by yuhangle) |
 | `clang18` | built with AOSP clang 18 (r522817) and `-mtune=cortex-a720`. KCFI type hashes are identical to the clang 17 build, so vendor modules are unaffected. |
 | `ksun` | **KernelSU-Next v3.4.2** (pershoot `dev-susfs` 4776e7c, version 33554) + **SUSFS v2.4.0** (susfs4ksu f76b81f): the same pair as WildKernels r23. Adds SUSFS priority-UID filter. Use KernelSU-Next manager v3.4.2 or newer. |
+| `autofdo` | **AutoFDO**: compiled with a sample profile of real kernel use on amethyst (`profiles/bluedmc.afdo`, ~81M samples, ~6.5 h from two phones). See docs/AUTOFDO.md. |
 
-Opt-in variants (separate zips, experimental):
+Opt-in variant (separate zip, experimental):
 | Stage | What |
 |---|---|
 | `lean` | turns off `init_on_alloc`, kernel-stack offset randomisation and KFENCE defaults. Slightly faster, less hardened. |
-| `autofdo` | profile-guided build from your own phone's kernel samples (docs/AUTOFDO.md) |
 
 
 About `-mtune`: the AOSP clang 17 that the 6.1 manifest pins has no Cortex-A720 model, so TechAmethyst's `-mtune=cortex-a720` was silently dropped. BluedMC v1.1 tuned for the A710 instead. Since v1.2, BluedMC builds with clang 18, which does have the A720 model. This only changes instruction scheduling, not the instruction set.
+
+## Changelog
+**v1.3**
+- KernelSU-Next v3.4.1 → **v3.4.2** (pershoot dev-susfs 4776e7c, version 33554). Update the manager to v3.4.2 or newer.
+- SUSFS v2.3.0 → **v2.4.0** (new: priority-UID filter)
+- **AutoFDO** profile-guided build from real amethyst usage
+- AutoFDO recorder KernelSU module with WebUI (`tools/afdo/ksu-module`): contribute your own usage data
+
+**v1.2**: LZ4 1.10 + NEON, clang 18 with `-mtune=cortex-a720`. **v1.1**: rebased on 6.1.138 (no flicker on HyperOS).
+
+## Help improve the profile
+Install the **BluedMC AutoFDO recorder** module, record a session of normal use from its WebUI, tap *Pack all for PC*, and send the `.tar.gz`. It contains only kernel code addresses and the kernel version, with no app data. Recordings from several people make the profile fit everyone's usage.
 
 ## Why 6.1.138 (the stock sublevel)
 On HyperOS, Xiaomi's prebuilt display driver (`msm_drm` / `mi_disp`) makes the screen **flicker or pulse** on newer GKI sublevels, even though every module loads cleanly.
@@ -103,7 +115,7 @@ The feature commits are produced by `scripts/bluedmc_features.sh`, starting from
 ```bash
 git -C $TOP/common checkout -B kernel v1.2       # TechAmethyst v1.2 (6.1.138)
 BMC_VER=v1.2 scripts/bluedmc_features.sh brand   # then build + gate after each stage
-scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun
+scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun autofdo
 ```
 
 ### KMI gate

@@ -17,10 +17,11 @@
 #   lz4      LZ4 v1.10.0 + arm64 NEON decompressor (zram/f2fs/erofs), patches/lz4-1.10.0-arm64-neon-6.1.patch
 #   clang18  build with AOSP clang r522817 (clang 18.0.1) and -mtune=cortex-a720 (device-tested 2026-11-27)
 #   ksun     KernelSU-Next v3.4.2 + SUSFS v2.4.0 (replaces TechAmethyst's v3.4.1 + SUSFS v2.3.0)
+#   autofdo  AutoFDO with profiles/bluedmc.afdo (amethyst recordings; AFDO_PROFILE=<file> overrides,
+#            AFDO_SUFFIX=1 adds -afdo to the version for test builds), see docs/AUTOFDO.md
 # opt-in (not in "all"):
 #   lean     drop some runtime hardening defaults for speed (init_on_alloc, kstack offset randomisation, KFENCE)
 #   version  re-brand an existing BluedMC tree to $BMC_VER
-#   autofdo  AutoFDO: compile with a sample profile, AFDO_PROFILE=<file> (experimental, see docs/AUTOFDO.md)
 #
 # usage: bluedmc_features.sh <stage>...      stages run in the order given; "all" = every stage in order
 # env:   TOP (Kleaf workspace, default ~/AmethystGKI/ws)  BMC_VER (default v1.0)
@@ -40,7 +41,7 @@ KSUN_REPO=${KSUN_REPO:-https://github.com/pershoot/KernelSU-Next}
 KSUN_REF=${KSUN_REF:-4776e7cd67663a532ca49ec9523cc6e9739d6cf2}   # dev-susfs 2026-11-14 = WildKernels r23
 KSUN_VERSION=${KSUN_VERSION:-33554}; KSUN_TAG=${KSUN_TAG:-v3.4.2}
 DEFC=$C/arch/arm64/configs/gki_defconfig
-ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun)   # + opt-in: lean, version, autofdo
+ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun autofdo)   # + opt-in: lean, version
 
 say(){ printf '\n\033[1;36m[BluedMC] %s\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31m[ERROR] %s\033[0m\n' "$*"; exit 1; }
@@ -304,7 +305,8 @@ stage_clang18(){
 # Experimental. Same flags as upstream scripts/Makefile.autofdo (Linux 6.13), minus
 # -fsplit-machine-functions (6.1's linker script has no .text.split.* placement).
 stage_autofdo(){
-  [ -f "${AFDO_PROFILE:-}" ] || die "AFDO_PROFILE=<sample profile> required (see docs/AUTOFDO.md)"
+  AFDO_PROFILE=${AFDO_PROFILE:-$REPO/profiles/bluedmc.afdo}
+  [ -f "$AFDO_PROFILE" ] || die "no AutoFDO profile at $AFDO_PROFILE (see docs/AUTOFDO.md)"
   say "autofdo: $AFDO_PROFILE"
   cp "$AFDO_PROFILE" "$C/bluedmc.afdo"
   cat >> "$C/arch/arm64/Makefile" <<'MK'
@@ -316,8 +318,9 @@ KBUILD_LDFLAGS += --lto-sample-profile=$(srctree)/bluedmc.afdo
 endif
 MK
   add_feature autofdo
-  sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+[a-z0-9-]*)\"\$/\1-afdo\"/" "$C/scripts/setlocalversion"
-  commit "$BRAND: autofdo build with amethyst sample profile (experimental)"
+  [ "${AFDO_SUFFIX:-0}" = 1 ] && \
+    sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+[a-z0-9-]*)\"\$/\1-afdo\"/" "$C/scripts/setlocalversion"
+  commit "$BRAND: autofdo build with amethyst sample profile ($(sha256sum "$AFDO_PROFILE" | cut -c1-12))"
 }
 
 # ------------------------------------------------------------------------------------------------ ksun
