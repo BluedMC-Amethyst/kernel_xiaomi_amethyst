@@ -33,6 +33,7 @@ Added by BluedMC (one commit each on the `kernel` branch):
 | `opt` | `-O3`, full LTO (CPU tuning: see `clang18`) |
 | `lz4` | LZ4 v1.10.0 + arm64 NEON decompressor (zram uses lz4 on HyperOS; port by yuhangle) |
 | `clang18` | built with AOSP clang 18 (r522817) and `-mtune=cortex-a720`. KCFI type hashes are identical to the clang 17 build, so vendor modules are unaffected. |
+| `ksun` | **KernelSU-Next v3.4.2** (pershoot `dev-susfs` 4776e7c, version 33554) + **SUSFS v2.4.0** (susfs4ksu f76b81f): the same pair as WildKernels r23. Adds SUSFS priority-UID filter. Use KernelSU-Next manager v3.4.2 or newer. |
 
 Opt-in variants (separate zips, experimental):
 | Stage | What |
@@ -102,7 +103,7 @@ The feature commits are produced by `scripts/bluedmc_features.sh`, starting from
 ```bash
 git -C $TOP/common checkout -B kernel v1.2       # TechAmethyst v1.2 (6.1.138)
 BMC_VER=v1.2 scripts/bluedmc_features.sh brand   # then build + gate after each stage
-scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18
+scripts/bluedmc_features.sh misc ...              # stages: brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun
 ```
 
 ### KMI gate

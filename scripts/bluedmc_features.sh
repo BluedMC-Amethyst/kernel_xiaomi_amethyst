@@ -16,6 +16,7 @@
 #   opt      -mtune=cortex-a710 -O3 (+ full LTO at build time), see stage_opt
 #   lz4      LZ4 v1.10.0 + arm64 NEON decompressor (zram/f2fs/erofs), patches/lz4-1.10.0-arm64-neon-6.1.patch
 #   clang18  build with AOSP clang r522817 (clang 18.0.1) and -mtune=cortex-a720 (device-tested 2026-11-27)
+#   ksun     KernelSU-Next v3.4.2 + SUSFS v2.4.0 (replaces TechAmethyst's v3.4.1 + SUSFS v2.3.0)
 # opt-in (not in "all"):
 #   lean     drop some runtime hardening defaults for speed (init_on_alloc, kstack offset randomisation, KFENCE)
 #   version  re-brand an existing BluedMC tree to $BMC_VER
@@ -35,12 +36,15 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 KP_REPO=${KP_REPO:-https://github.com/WildKernels/kernel_patches}
 BBG_REPO=${BBG_REPO:-https://github.com/vc-teahouse/Baseband-guard}
 BBG_REF=${BBG_REF:-48d9fde}
+KSUN_REPO=${KSUN_REPO:-https://github.com/pershoot/KernelSU-Next}
+KSUN_REF=${KSUN_REF:-4776e7cd67663a532ca49ec9523cc6e9739d6cf2}   # dev-susfs 2026-11-14 = WildKernels r23
+KSUN_VERSION=${KSUN_VERSION:-33554}; KSUN_TAG=${KSUN_TAG:-v3.4.2}
 DEFC=$C/arch/arm64/configs/gki_defconfig
-ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18)   # + opt-in: lean, version, autofdo
+ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun)   # + opt-in: lean, version, autofdo
 
 say(){ printf '\n\033[1;36m[BluedMC] %s\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31m[ERROR] %s\033[0m\n' "$*"; exit 1; }
-[ -d "$C/.git" ] || die "no kernel git at $C"
+[ -e "$C/.git" ] || die "no kernel git at $C"
 
 setcfg(){   # setcfg CONFIG_X y|n|"value"
   local k=$1 v=$2 line
@@ -314,6 +318,27 @@ MK
   add_feature autofdo
   sed -i -E "s/^(echo \"\\\$res-$BRAND-v[0-9.]+[a-z0-9-]*)\"\$/\1-afdo\"/" "$C/scripts/setlocalversion"
   commit "$BRAND: autofdo build with amethyst sample profile (experimental)"
+}
+
+# ------------------------------------------------------------------------------------------------ ksun
+# KernelSU-Next + SUSFS update. The kernel-side SUSFS v2.4.0 hooks (susfs4ksu gki-android14-6.1 f76b81f,
+# rebased onto 6.1.138) are a diff against TechAmethyst v1.2's SUSFS v2.3.0 files; drivers/kernelsu is
+# replaced by the pinned pershoot dev-susfs commit, the same pair WildKernels r23 ships its manager for.
+stage_ksun(){
+  say "ksun: KernelSU-Next $KSUN_TAG ($KSUN_VERSION, ${KSUN_REF:0:7}) + SUSFS v2.4.0"
+  grep -q 'SUSFS_VERSION "v2.3.0"' "$C/include/linux/susfs.h" || die "expected TechAmethyst's SUSFS v2.3.0"
+  apply "$REPO/patches/susfs-v2.4.0-f76b81f-6.1.138.patch"
+  local k; k=$(mktemp -d)
+  git -C "$k" init -q && git -C "$k" fetch -q --depth 1 "$KSUN_REPO" "$KSUN_REF" || die "fetch $KSUN_REPO $KSUN_REF"
+  rm -rf "$C/drivers/kernelsu" && mkdir "$C/drivers/kernelsu"
+  git -C "$k" archive FETCH_HEAD kernel | tar -x -C "$C/drivers/kernelsu" --strip-components=1
+  rm -f "$C/drivers/kernelsu/include/uapi" && mkdir "$C/drivers/kernelsu/include/uapi"   # symlink to ../../uapi upstream
+  git -C "$k" archive FETCH_HEAD uapi | tar -x -C "$C/drivers/kernelsu/include/uapi" --strip-components=1
+  rm -rf "$k" "$C/drivers/kernelsu/.clangd.example"
+  sed -i "s/^KSU_VERSION_FALLBACK := .*/KSU_VERSION_FALLBACK := $KSUN_VERSION/; s/^KSU_VERSION_TAG_FALLBACK := .*/KSU_VERSION_TAG_FALLBACK := $KSUN_TAG/" "$C/drivers/kernelsu/Kbuild"
+  setcfg CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER y
+  for o in KDP RKP DEFEX NO_PATCH_TEXT; do setcfg CONFIG_KSU_SAMSUNG_$o n; done   # Xiaomi device
+  commit "$BRAND: ksun KernelSU-Next $KSUN_TAG (${KSUN_REF:0:7}) + SUSFS v2.4.0"
 }
 
 stages=("$@"); [ ${#stages[@]} -eq 0 ] && die "usage: $0 <stage>... | all   (stages: ${ALL_STAGES[*]})"
