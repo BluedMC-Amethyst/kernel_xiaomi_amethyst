@@ -1,30 +1,3 @@
-#include "ksu.h"
-#include "linux/cred.h"
-#include "linux/namei.h"
-#include "util.h"
-#include <linux/err.h>
-#include <linux/fs.h>
-#include <linux/list.h>
-#include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/types.h>
-#include <linux/version.h>
-#ifdef CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
-#include <linux/kthread.h>
-#include <linux/sched.h>
-#endif
-#include <linux/compiler.h>  // WRITE_ONCE
-#include <linux/delay.h>     // msleep
-#include <linux/preempt.h>   // in_atomic()
-#include <linux/irqflags.h>  // irqs_disabled()
-#include <linux/atomic.h>    // cmpxchg
-
-#include "policy/allowlist.h"
-#include "manager/apk_sign.h"
-#include "klog.h" // IWYU pragma: keep
-#include "manager/manager_identity.h"
-#include "manager/throne_tracker.h"
-
 static DEFINE_MUTEX(throne_tracker_mutex);
 
 uid_t ksu_manager_appid = KSU_INVALID_APPID;
@@ -33,43 +6,26 @@ uid_t ksu_manager_appid = KSU_INVALID_APPID;
 
 static char cached_manager_apk_path[DATA_PATH_LEN];
 
-#define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"
+// extendable manager support
+#define extra_manager_apk(tgt, name) ({			\
+	static_assert(__builtin_constant_p(name));	\
+	static_assert(DATA_PATH_LEN > sizeof(name));	\
+	!strncmp(tgt, name, sizeof(name));		\
+})
+#define is_kowsu_apk(tgt) extra_manager_apk(tgt, "com.kowx712.supermanager")
+#define is_midorisu_apk(tgt) extra_manager_apk(tgt, "com.midori.supermanager")
+#define test_extra_pkgs(tgt) (is_kowsu_apk(tgt) || is_midorisu_apk(tgt))
 
-struct uid_data {
-	struct list_head list;
-	u32 uid;
-	char package[KSU_MAX_PACKAGE_NAME];
-};
+#define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"
 
 static void crown_manager(const char *apk, struct list_head *uid_data)
 {
 	struct list_head *list = (struct list_head *)uid_data;
 	struct uid_data *np;
-	const char *target_pkg;
-
-#ifdef KSU_MANAGER_PACKAGE
-	target_pkg = KSU_MANAGER_PACKAGE;
-#else
-	char pkg[KSU_MAX_PACKAGE_NAME];
-	char dir_path[DATA_PATH_LEN];
-	char *last_slash;
-
-	strscpy(dir_path, apk, sizeof(dir_path));
-	last_slash = strrchr(dir_path, '/');
-	if (last_slash)
-		*last_slash = '\0'; // strip /base.apk
-
-	if (get_pkg_from_apk_dir_path(pkg, dir_path) < 0) {
-		pr_err("Failed to get package name from apk dir path: %s\n", dir_path);
-		return;
-	}
-	pr_info("manager pkg: %s\n", pkg);
-	target_pkg = pkg;
-#endif
 
 	list_for_each_entry (np, list, list) {
-		if (strncmp(np->package, target_pkg, KSU_MAX_PACKAGE_NAME) == 0) {
-			pr_info("Crowning manager: %s(uid=%d)\n", target_pkg, np->uid);
+		if (test_extra_pkgs(np->package) || strncmp(np->package, KSU_PACKAGE_NAME, KSU_MAX_PACKAGE_NAME) == 0) {
+			pr_info("Crowning manager: uid=%d\n", np->uid);
 			ksu_set_manager_appid(np->uid);
 			break;
 		}
@@ -103,26 +59,33 @@ struct my_dir_context {
 
 static bool maybe_manager_apk_dir(const char *path)
 {
-#ifdef KSU_MANAGER_PACKAGE
-	_Static_assert(sizeof(KSU_MANAGER_PACKAGE) < KSU_MAX_PACKAGE_NAME, "KSU_MANAGER_PACKAGE too long!");
+	_Static_assert(sizeof(KSU_PACKAGE_NAME) < KSU_MAX_PACKAGE_NAME, "KSU_PACKAGE_NAME too long!");
 	char pkg[KSU_MAX_PACKAGE_NAME];
 	if (get_pkg_from_apk_dir_path(pkg, path) < 0) {
 		pr_err("Failed to get package name from apk dir path: %s\n", path);
 		return false;
 	}
 
+	if (test_extra_pkgs(pkg))
+		return true;
+
 	// pkg is `<real package>`
-	return strncmp(pkg, KSU_MANAGER_PACKAGE, sizeof(KSU_MANAGER_PACKAGE)) == 0;
-#else
-	return true;
-#endif
+	return strncmp(pkg, KSU_PACKAGE_NAME, sizeof(KSU_PACKAGE_NAME)) == 0;
 }
 
-static FILLDIR_RETURN_TYPE my_actor(struct dir_context *ctx, const char *name, int namelen, loff_t off, u64 ino,
-				    unsigned int d_type)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,19,0)
+#define MY_ACTOR_CTX_ARG struct dir_context *ctx
+#else
+#define MY_ACTOR_CTX_ARG void *ctx_void
+#endif
+
+static FILLDIR_RETURN_TYPE my_actor(MY_ACTOR_CTX_ARG, const char *name, int namelen, loff_t off, u64 ino,
+									unsigned int d_type)
 {
-	struct my_dir_context *my_ctx =
-		container_of(ctx, struct my_dir_context, ctx);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
+	struct dir_context *ctx = (struct dir_context *)ctx_void;
+#endif
+	struct my_dir_context *my_ctx = container_of(ctx, struct my_dir_context, ctx);
 
 	// we put the apk path we collected here
 	char *candidate_path = (char *)my_ctx->private_data;
@@ -132,14 +95,12 @@ static FILLDIR_RETURN_TYPE my_actor(struct dir_context *ctx, const char *name, i
 	if (!strncmp(name, "..", namelen) || !strncmp(name, ".", namelen))
 		return FILLDIR_ACTOR_CONTINUE; // Skip "." and ".."
 
-	if (d_type == DT_DIR && namelen >= 8 && !strncmp(name, "vmdl", 4) &&
-		!strncmp(name + namelen - 4, ".tmp", 4)) {
+	if (d_type == DT_DIR && namelen >= 8 && !strncmp(name, "vmdl", 4) && !strncmp(name + namelen - 4, ".tmp", 4)) {
 		pr_info("Skipping directory: %.*s\n", namelen, name);
 		return FILLDIR_ACTOR_CONTINUE; // Skip staging package
 	}
 
-	if (snprintf(dirpath, DATA_PATH_LEN, "%s/%.*s", my_ctx->parent_dir, namelen,
-				name) >= DATA_PATH_LEN) {
+	if (snprintf(dirpath, DATA_PATH_LEN, "%s/%.*s", my_ctx->parent_dir, namelen, name) >= DATA_PATH_LEN) {
 		pr_err("Path too long: %s/%.*s\n", my_ctx->parent_dir, namelen, name);
 		return FILLDIR_ACTOR_CONTINUE;
 	}
@@ -158,6 +119,7 @@ static FILLDIR_RETURN_TYPE my_actor(struct dir_context *ctx, const char *name, i
 
 		return FILLDIR_ACTOR_CONTINUE;
 	}
+
 	// now put this on candidate_path
 	if (d_type == DT_REG && namelen == 8 && !memcmp(name, "base.apk", 8)) {
 		if (maybe_manager_apk_dir(my_ctx->parent_dir)) {
@@ -171,21 +133,30 @@ static FILLDIR_RETURN_TYPE my_actor(struct dir_context *ctx, const char *name, i
 	return FILLDIR_ACTOR_CONTINUE;
 }
 
-static void search_manager(const char *path, int depth, struct list_head *uid_data)
+// compat: https://elixir.bootlin.com/linux/v3.9/source/include/linux/fs.h#L771
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0)
+#define ksu_get_magic(x) ((x)->f_inode->i_sb->s_magic)
+#else
+#define ksu_get_magic(x) ((x)->f_path.dentry->d_inode->i_sb->s_magic)
+#endif
+
+static noinline void search_manager(const char *path, int depth, struct list_head *uid_data)
 {
 	int i, stop = 0;
 	struct list_head data_path_list;
 	INIT_LIST_HEAD(&data_path_list);
 	unsigned long data_app_magic = 0;
 
+	char *memory __offstack(sizeof(struct data_path) + DATA_PATH_LEN);
+
 	// First depth
-	struct data_path data;
-	strscpy(data.dirpath, path, DATA_PATH_LEN);
-	data.depth = depth;
-	list_add_tail(&data.list, &data_path_list);
+	struct data_path *data = (struct data_path *)memory;
+	strscpy(data->dirpath, path, DATA_PATH_LEN);
+	data->depth = depth;
+	list_add_tail(&data->list, &data_path_list);
 
 	// we put the apk path we collected here
-	char candidate_path[DATA_PATH_LEN];
+	char *candidate_path = memory + sizeof(struct data_path);
 	candidate_path[0] = 0;
 
 	for (i = depth; i >= 0; i--) {
@@ -195,10 +166,10 @@ static void search_manager(const char *path, int depth, struct list_head *uid_da
 			if (stop)
 				goto skip_iterate;
 			struct my_dir_context ctx = { .ctx.actor = my_actor,
-										.data_path_list = &data_path_list,
-										.parent_dir = pos->dirpath,
-										.private_data = candidate_path,
-										.depth = pos->depth };
+							.data_path_list = &data_path_list,
+							.parent_dir = pos->dirpath,
+							.private_data = candidate_path,
+							.depth = pos->depth };
 			struct file *file = ksu_filp_open_nonotify(pos->dirpath, O_RDONLY | O_NOFOLLOW | O_NOATIME | O_DIRECTORY);
 			if (IS_ERR(file)) {
 				pr_err("Failed to open directory: %s, err: %ld\n", pos->dirpath, PTR_ERR(file));
@@ -207,43 +178,42 @@ static void search_manager(const char *path, int depth, struct list_head *uid_da
 
 			// grab magic on first folder, which is /data/app
 			if (!data_app_magic) {
-				if (file->f_inode->i_sb->s_magic) {
-					data_app_magic = file->f_inode->i_sb->s_magic;
+				if (ksu_get_magic(file)) {
+					data_app_magic = ksu_get_magic(file);
 					pr_info("%s: dir: %s got magic! 0x%lx\n", __func__, pos->dirpath, data_app_magic);
 				} else {
 					filp_close(file, NULL);
 					goto skip_iterate;
 				}
 			}
-
-			if (file->f_inode->i_sb->s_magic != data_app_magic) {
-				pr_info("%s: skip: %s magic: 0x%lx expected: 0x%lx\n", __func__, pos->dirpath,
-					file->f_inode->i_sb->s_magic, data_app_magic);
+				
+			if (ksu_get_magic(file) != data_app_magic) {
+				pr_info("%s: skip: %s magic: 0x%lx expected: 0x%lx\n", __func__, pos->dirpath, ksu_get_magic(file), data_app_magic);
 				filp_close(file, NULL);
 				goto skip_iterate;
 			}
 
-			candidate_path[0] = 0; // Reset for this iteration
 			iterate_dir(file, &ctx.ctx);
 			filp_close(file, NULL);
 
 			if (!candidate_path[0])
 				goto skip_iterate;
 
+			// As soon as we get the manager apk path, we can stop
+			stop = 1;
+
 			bool is_manager = is_manager_apk(candidate_path);
 			pr_info("Found manager base.apk at path: %s, is_manager: %d\n", candidate_path, is_manager);
 
-			// Only crown if verification passes
+			// Only crown if signature verification pass
 			if (unlikely(!is_manager))
 				goto skip_iterate;
 
-			// Verified manager found, halt outer loop
-			stop = 1;
 			crown_manager(candidate_path, uid_data);
 
 		skip_iterate:
 			list_del(&pos->list);
-			if (pos != &data)
+			if (pos != data)
 				kfree(pos);
 		}
 	}
@@ -256,8 +226,7 @@ static bool is_uid_exist(uid_t uid, char *package, void *data)
 
 	bool exist = false;
 	list_for_each_entry (np, list, list) {
-		if (np->uid == uid % PER_USER_RANGE &&
-			strncmp(np->package, package, KSU_MAX_PACKAGE_NAME) == 0) {
+		if (np->uid == uid % PER_USER_RANGE && strncmp(np->package, package, KSU_MAX_PACKAGE_NAME) == 0) {
 			exist = true;
 			break;
 		}
@@ -265,28 +234,12 @@ static bool is_uid_exist(uid_t uid, char *package, void *data)
 	return exist;
 }
 
-static void track_throne_function(bool prune_only)
+static void throne_tracker_fn(bool prune_only)
 {
-	mutex_lock(&throne_tracker_mutex);
-	const struct cred *old_cred = override_creds(ksu_cred);
-	struct file *fp = NULL;
-	int t;
-	long err = -ENOENT;
-
-	// Retry (open; avoids races with pkg. mgr. packages.list update(s); hint: is_lock_held)
-	for (t = 0;
-		t < 10 && IS_ERR(fp = filp_open(SYSTEM_PACKAGES_LIST_PATH, O_RDONLY, 0));
-		t++) {
-			err = PTR_ERR(fp);
-			if (!is_lock_held(SYSTEM_PACKAGES_LIST_PATH) &&
-				err != -EBUSY && err != -EAGAIN && err != -ENOENT)
-					break;
-			msleep(100);
-	}
+	struct file *fp = filp_open(SYSTEM_PACKAGES_LIST_PATH, O_RDONLY, 0);
 	if (IS_ERR(fp)) {
-		pr_err("%s: open " SYSTEM_PACKAGES_LIST_PATH " failed: %ld\n",
-			__func__, err);
-		goto out_revert_cred;
+		pr_err("%s: open " SYSTEM_PACKAGES_LIST_PATH " failed: %ld\n", __func__, PTR_ERR(fp));
+		return;
 	}
 
 	struct list_head uid_list;
@@ -309,7 +262,7 @@ static void track_throne_function(bool prune_only)
 		}
 		buf[count] = '\0';
 
-		struct uid_data *data = kzalloc(sizeof(*data), GFP_KERNEL);
+		struct uid_data *data = kzalloc(sizeof(struct uid_data), GFP_KERNEL);
 		if (!data) {
 			filp_close(fp, 0);
 			goto out;
@@ -350,34 +303,38 @@ static void track_throne_function(bool prune_only)
 	uid_t manager_package_uid = KSU_INVALID_APPID;
 	bool need_rescan = false;
 	list_for_each_entry (np, &uid_list, list) {
-#ifdef KSU_MANAGER_PACKAGE
-		if (strcmp(np->package, KSU_MANAGER_PACKAGE) == 0) {
+		if (test_extra_pkgs(np->package) || strcmp(np->package, KSU_PACKAGE_NAME) == 0) {
 			manager_package_uid = np->uid;
 			break;
 		}
-#else
-		if (np->uid == ksu_get_manager_appid()) {
-			manager_package_uid = np->uid;
-			break;
-		}
-#endif
 	}
 
 	if (manager_package_uid == KSU_INVALID_APPID) {
 		cached_manager_apk_path[0] = 0;
 		if (ksu_is_manager_appid_valid()) {
+			struct uid_data *cur;
+			bool still_installed = false;
+
+			list_for_each_entry (cur, &uid_list, list) {
+				if (cur->uid == ksu_get_manager_appid()) {
+					still_installed = true;
+					break;
+				}
+			}
+
+			if (still_installed) {
+				pr_info("manager uid=%u still installed (signature fallback), skip search!\n",
+						ksu_get_manager_appid());
+				goto prune;
+			}
+
 			pr_info("manager is uninstalled, invalidate it!\n");
 			ksu_invalidate_manager_uid();
-			// Do not return here: replacing a manager uninstalls the old
-			// package and installs the new one, and a single packages.list
-			// update can carry both. Returning would leave the replacement
-			// uncrowned until some later package event or a reboot, and the
-			// rescan below is exactly where an unpinned kernel finds it.
 		}
-#ifndef KSU_MANAGER_PACKAGE
-		// Unpinned: package name unknown; rescan to find it
-		need_rescan = true;
-#endif
+
+		if (ksu_sig_fallback_run(&uid_list))
+			goto prune;
+			
 	} else {
 		if (!ksu_is_manager_appid_valid()) {
 			need_rescan = true;
@@ -407,11 +364,7 @@ static void track_throne_function(bool prune_only)
 				pr_err("stat cached manager path failed: %d (path=%s)\n", ret, cached_manager_apk_path);
 			}
 		}
-#ifdef KSU_MANAGER_PACKAGE
-		pr_info("Searching manager " KSU_MANAGER_PACKAGE "...\n");
-#else
-		pr_info("Searching manager...\n");
-#endif
+		pr_info("Searching manager " KSU_PACKAGE_NAME "...\n");
 		search_manager("/data/app", 2, &uid_list);
 		pr_info("Search manager finished\n");
 	}
@@ -424,65 +377,68 @@ out:
 	list_for_each_entry_safe (np, n, &uid_list, list) {
 		list_del(&np->list);
 		kfree(np);
-	}
-out_revert_cred:
-	revert_creds(old_cred);
-	mutex_unlock(&throne_tracker_mutex);
+	}	
 }
 
-#ifdef CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
-static struct task_struct *throne_thread;
-static int throne_tracker_thread(void *data);
-
-// Wrapper
-void track_throne(bool prune_only)
-{
-	struct task_struct *t;
-
-	/*
-	 * Single-flight; do nothing if thread running
-	 *                race closure via sentinel set: ERR_PTR(-EINPROGRESS)
-	 *
-	 */
-	if (cmpxchg(&throne_thread, NULL,
-			(struct task_struct *)ERR_PTR(-EINPROGRESS)) != NULL)
-		return;
-
-	t = kthread_run(throne_tracker_thread,
-			(void *)(unsigned long)prune_only,
-			"throne_tracker");
-
-	if (IS_ERR(t))
-		WRITE_ONCE(throne_thread, NULL);
-	else
-		WRITE_ONCE(throne_thread, t);
-}
-
-// Threaded
 static int throne_tracker_thread(void *data)
 {
-	bool prune_only = (bool)(unsigned long)data;
+	// now de-void it here
+	bool prune_only = (bool)data;
 
-	pr_info("%s: pid: %d started (prune_only=%d)\n",
-		__func__, current->pid, prune_only);
+	pr_info("throne_tracker: pid: %d started\n", current->pid);
 
-	track_throne_function(prune_only);
+	guarded_mutex_lock(&throne_tracker_mutex);
 
-	// clear slot before renewing uid filters so concurrent updates re-trigger
-	WRITE_ONCE(throne_thread, NULL);
+test_tmp:
+	if (!is_file_existing("/data/system/packages.list.tmp"))
+		goto test_list;
 
-	if (!prune_only)
-		susfs_renew_uid_filters();
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("throne_tracker: rename not finished! retry!\n");
 
-	pr_info("%s: pid: %d exit\n", __func__, current->pid);
+	msleep(20); // yield
+	goto test_tmp;
+
+test_list:
+	if (is_file_stable(SYSTEM_PACKAGES_LIST_PATH))
+		goto start_tt;
+
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("throne_tracker: rename not finished! retry!\n");
+
+	msleep(20); // yield
+	goto test_list;	
+
+start_tt:
+	// lessen that window where user opens manager right away, yet its not crowned
+	set_user_nice(current, -10);
+
+	// this in exchange of override creds, we escape this whole thread.
+	escape_to_root_forced();
+	throne_tracker_fn(prune_only);
+
+	pr_info("throne_tracker: pid: %d exit!\n", current->pid);
 	return 0;
 }
-#else
+
 void track_throne(bool prune_only)
 {
-	track_throne_function(prune_only);
+#ifndef CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
+	static void *label = &&first_run;
+	goto *label;
+
+first_run:
+	mutex_lock(&throne_tracker_mutex);
+	throne_tracker_fn(prune_only);
+	mutex_unlock(&throne_tracker_mutex);
+
+	label = &&threaded;
+	return;
+threaded:
+#endif
+	// HACK: force cast prune_only to be a void *
+	kthread_run(throne_tracker_thread, (void *)prune_only, "kthread");
 }
-#endif // CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
 
 void __init ksu_throne_tracker_init()
 {

@@ -1,28 +1,3 @@
-#include "util.h"
-#include <linux/err.h>
-#include <linux/fs.h>
-#include <linux/gfp.h>
-#include <linux/kernel.h>
-#include <linux/limits.h>
-#include <linux/slab.h>
-#include <linux/version.h>
-#ifdef CONFIG_KSU_DEBUG
-#include <linux/moduleparam.h>
-#endif
-#include <crypto/hash.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-#include <crypto/sha2.h>
-#else
-#include <crypto/sha.h>
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
-#include <linux/hex.h>
-#endif
-
-#include "manager/apk_sign.h"
-#include "uapi/app_profile.h"
-#include "klog.h" // IWYU pragma: keep
-
 struct sdesc {
 	struct shash_desc shash;
 	char ctx[];
@@ -41,8 +16,7 @@ static struct sdesc *init_sdesc(struct crypto_shash *alg)
 	return sdesc;
 }
 
-static int calc_hash(struct crypto_shash *alg, const unsigned char *data,
-                     unsigned int datalen, unsigned char *digest)
+static int calc_hash(struct crypto_shash *alg, const unsigned char *data, unsigned int datalen, unsigned char *digest)
 {
 	struct sdesc *sdesc;
 	int ret;
@@ -58,8 +32,7 @@ static int calc_hash(struct crypto_shash *alg, const unsigned char *data,
 	return ret;
 }
 
-static int ksu_sha256(const unsigned char *data, unsigned int datalen,
-                      unsigned char *digest)
+static int ksu_sha256(const unsigned char *data, unsigned int datalen, unsigned char *digest)
 {
 	struct crypto_shash *alg;
 	char *hash_alg_name = "sha256";
@@ -97,7 +70,7 @@ static bool read_length_prefixed_end(struct file *fp, loff_t *pos, loff_t contai
 }
 
 static bool check_block(struct file *fp, loff_t *pos, loff_t block_end, unsigned expected_size,
-			const char *expected_sha256)
+						const char *expected_sha256)
 {
 	loff_t signers_end, signer_end, signed_data_end, digests_end, certificates_end;
 	u32 certificate_size;
@@ -126,17 +99,18 @@ static bool check_block(struct file *fp, loff_t *pos, loff_t block_end, unsigned
 		return false;
 	}
 
-	char cert[CERT_MAX_LENGTH];
+	char *memory __offstack(CERT_MAX_LENGTH + SHA256_DIGEST_SIZE + SHA256_DIGEST_SIZE * 2 + 1);
+	char *cert = memory;
 	if (!read_exact(fp, cert, certificate_size, pos, certificates_end))
 		return false;
 
-	unsigned char digest[SHA256_DIGEST_SIZE];
+	unsigned char *digest = cert + CERT_MAX_LENGTH;
 	if (ksu_sha256(cert, certificate_size, digest)) {
 		pr_info("sha256 error\n");
 		return false;
 	}
 
-	char hash_str[SHA256_DIGEST_SIZE * 2 + 1];
+	char *hash_str = digest + SHA256_DIGEST_SIZE;
 	hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
 
 	bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
@@ -144,9 +118,7 @@ static bool check_block(struct file *fp, loff_t *pos, loff_t block_end, unsigned
 	return strcmp(expected_sha256, hash_str) == 0;
 }
 
-static __always_inline bool check_v2_signature(char *path,
-                                               unsigned expected_size,
-                                               const char *expected_sha256)
+static __always_inline bool check_v2_signature(char *path, unsigned expected_size, const char *expected_sha256)
 {
 	unsigned char buffer[0x10] = { 0 };
 	u32 cd_offset, cd_size;
@@ -159,13 +131,31 @@ static __always_inline bool check_v2_signature(char *path,
 	int v2_signing_blocks = 0;
 
 	int i;
+
+	struct path kpath;
+	if (kern_path(path, 0, &kpath))
+		return false;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0) 
+	if (inode_is_locked(kpath.dentry->d_inode))
+#else
+	if (mutex_is_locked(&kpath.dentry->d_inode->i_mutex))
+#endif
+	{
+		pr_info("%s: inode is locked for %s\n", __func__, path);
+		path_put(&kpath);
+		return false;
+	}
+
+	path_put(&kpath);
+
 	struct file *fp = ksu_filp_open_nonotify(path, O_RDONLY | O_NOATIME);
 	if (IS_ERR(fp)) {
 		pr_err("open %s error.\n", path);
 		return false;
 	}
 
-	file_size = generic_file_llseek(fp, 0, SEEK_END);
+	file_size = vfs_llseek(fp, 0, SEEK_END);
 	if (file_size < 0)
 		goto clean;
 
@@ -297,8 +287,7 @@ static struct kernel_param_ops expected_size_ops = {
 	.get = param_get_uint,
 };
 
-module_param_cb(ksu_debug_manager_appid, &expected_size_ops,
-                &ksu_debug_manager_appid, S_IRUSR | S_IWUSR);
+module_param_cb(ksu_debug_manager_appid, &expected_size_ops, &ksu_debug_manager_appid, S_IRUSR | S_IWUSR);
 
 #endif
 
@@ -330,25 +319,30 @@ int get_pkg_from_apk_dir_path(char *pkg, const char *path)
 
 bool is_manager_apk(char *path)
 {
-	const char *p = KSU_NEXT_MANAGER_LIST;
+	// dummy.keystore
+	if (check_v2_signature(path, 0x363, "4359c171f32543394cbc23ef908c4bb94cad7c8087002ba164c8230948c21549"))
+		return true;
 
-	while (*p) {
-		unsigned int size;
-		char hash[65] = {0};
+	// kernelsu suksisu2
+	if (check_v2_signature(path, 0x35c, "56695cfa454a72060641830a5c64297aaf3f21f8d55db4a21f83d9ab5be0cd19"))
+		return true;
 
-		if (sscanf(p, "%x:%64[^,]", &size, hash) == 2) {
-			if (check_v2_signature(path, size, hash)) {
-				pr_info("KernelSU: matched manager APK: %s (size=0x%x, hash=%s)\n",
-					path, size, hash);
-				return true;
-			}
-		}
+	// kernelsu suksisu
+	if (check_v2_signature(path, EXPECTED_SIZE, EXPECTED_HASH))
+		return true;
 
-		p = strchr(p, ',');
-		if (!p)
-			break;
-		p++; // skip comma
-	}
+	// KOWX712/KernelSU
+	if (check_v2_signature(path, 0x375, "484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588"))
+		return true;
+
+	// midori01/KernelSU
+	if (check_v2_signature(path, 0x0368, "b9ee6759de4794f954883458b722b97ae6527cb7709a051db9a2348c0eea1e42"))
+		return true;
 
 	return false;
+}
+
+bool ksu_check_apk_signature(char *path, unsigned int size, const char *hash)
+{
+	return check_v2_signature(path, size, hash);
 }

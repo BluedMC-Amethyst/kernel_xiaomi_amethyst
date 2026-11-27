@@ -1,190 +1,122 @@
-// SPDX-License-Identifier: GPL-2.0
-#include <linux/module.h>
-#include <linux/fs.h>
-#include <linux/namei.h>
-#include <linux/fsnotify_backend.h>
-#include <linux/sched.h>
-#include <linux/slab.h>
-#include <linux/rculist.h>
-#include <linux/task_work.h>
-#include <linux/version.h>
-#include "klog.h" // IWYU pragma: keep
-#include "manager/throne_tracker.h"
-
-#define MASK_SYSTEM (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
-
-struct watch_dir {
-	const char *path;
-	u32 mask;
-	struct path kpath;
-	struct inode *inode;
-	struct fsnotify_mark *mark;
-};
-
-static struct fsnotify_group *g;
-
-#ifndef CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
-static void ksu_track_throne_tw_func(struct callback_head *cb)
-{
-    kfree(cb);
-    // Runs after exit_fs() if the task is exiting; path lookups would oops
-    if (current->flags & PF_EXITING)
-        return;
-    track_throne(false);
-    susfs_renew_uid_filters();
-}
-
-// Never scan from the fsnotify handler: fsnotify_mark_srcu and the rename's dir
-// locks would be held for the whole scan. Defer with task_work, not a kthread
-// or kworker: the scan must finish before the rename returns, or the manager
-// can be opened before it is crowned, and it must run in the renamer's
-// (Android's) namespaces, which differ from init_task's on WSA/Waydroid.
-static void ksu_defer_track_throne(void)
-{
-    struct callback_head *cb;
-
-    if (!(current->flags & PF_KTHREAD)) {
-        cb = kzalloc(sizeof(*cb), GFP_KERNEL);
-        if (cb) {
-            cb->func = ksu_track_throne_tw_func;
-            if (!task_work_add(current, cb, TWA_RESUME))
-                return;
-            kfree(cb);
-        }
-    }
-    pr_warn("defer track_throne failed, run it inline\n");
-    track_throne(false);
-    susfs_renew_uid_filters();
-}
-#endif
-
-
-static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
-                                  struct inode *inode, struct inode *dir,
-                                  const struct qstr *file_name, u32 cookie)
-{
-    if (!file_name)
-        return 0;
-    if (mask & FS_ISDIR)
-        return 0;
-    if (file_name->len == 13 && !memcmp(file_name->name, "packages.list", 13)) {
-        pr_info("packages.list detected: %d\n", mask);
-#ifdef CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
-        track_throne(false);
-#else
-        ksu_defer_track_throne();
-#endif
-    }
-    return 0;
-}
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2026 \xx
+ *
+ * This file is a downstream extension and NOT affiliated, endorsed by,
+ * or maintained by the official KernelSU developers.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ */
 
 /*
- * The kernel calls group->ops->free_mark() unconditionally from
- * fsnotify_final_mark_destroy() (no NULL check), and the marks here come from
- * kzalloc() - not from fsnotify_mark_cache - so this is what releases them.
+ * ! this is on inode_rename, NOT fsnotify
+ * we have access to LSM and overhead is way lower.
+ * we watch one file, check ifs on the same parent inode.
+ * a few int compare and a ptr compare. thats it.
+ * as for throne tracker, we just async it by hand
+ * by offloading it to a kthread.
+ * reuses code from: https://github.com/tiann/KernelSU/blob/v1.0.5/kernel/core_hook.c#L188
  */
-static void ksu_free_mark(struct fsnotify_mark *mark)
+
+static void *system_dir_inode_ptr = nullptr;
+
+static noinline void ksu_grab_data_system_inode()
 {
-	kfree(mark);
-}
-
-static const struct fsnotify_ops ksu_ops = {
-	.handle_inode_event = ksu_handle_inode_event,
-	.free_mark = ksu_free_mark,
-};
-
-static int add_mark_on_inode(struct inode *inode, u32 mask,
-                             struct fsnotify_mark **out)
-{
-	struct fsnotify_mark *m;
-
-	m = kzalloc(sizeof(*m), GFP_KERNEL);
-	if (!m)
-		return -ENOMEM;
-
-	fsnotify_init_mark(m, g);
-	m->mask = mask;
-
-	if (fsnotify_add_inode_mark(m, inode, 0)) {
-		fsnotify_put_mark(m);
-		return -EINVAL;
-	}
-	*out = m;
-	return 0;
-}
-
-static int watch_one_dir(struct watch_dir *wd)
-{
-	int ret = kern_path(wd->path, LOOKUP_FOLLOW, &wd->kpath);
+	struct path path;
+	int ret = kern_path("/data/system", LOOKUP_FOLLOW, &path);
 	if (ret) {
-		pr_info("path not ready: %s (%d)\n", wd->path, ret);
-		return ret;
+		pr_info("renameat: /data/system not ready? ret: (%d)\n", ret);
+		return;
 	}
-	wd->inode = d_inode(wd->kpath.dentry);
-	ihold(wd->inode);
 
-	ret = add_mark_on_inode(wd->inode, wd->mask, &wd->mark);
-	if (ret) {
-		pr_err("Add mark failed for %s (%d)\n", wd->path, ret);
-		path_put(&wd->kpath);
-		iput(wd->inode);
-		wd->inode = NULL;
-		return ret;
-	}
-	pr_info("watching %s\n", wd->path);
-	return 0;
+	system_dir_inode_ptr = (void *)d_inode(path.dentry);
+	pr_info("renameat: cached /data/system d_inode: 0x%lx\n", system_dir_inode_ptr);
+	path_put(&path);
 }
 
-static void unwatch_one_dir(struct watch_dir *wd)
+static void ksu_rename_observer_slow(struct dentry *old_dentry, struct dentry *new_dentry)
 {
-	if (wd->mark) {
-		fsnotify_destroy_mark(wd->mark, g);
-		fsnotify_put_mark(wd->mark);
-		wd->mark = NULL;
-	}
-	if (wd->inode) {
-		iput(wd->inode);
-		wd->inode = NULL;
-	}
-	if (wd->kpath.dentry) {
-		path_put(&wd->kpath);
-		memset(&wd->kpath, 0, sizeof(wd->kpath));
-	}
-}
+	system_dir_inode_ptr = nullptr; // reset cached inode
 
-static struct watch_dir g_watch = { .path = "/data/system",
-                                    .mask = MASK_SYSTEM };
+	char path[128];
+	char *buf = dentry_path_raw(new_dentry, path, sizeof(path) - 1);
+	if (IS_ERR(buf)) {
+		pr_err("dentry_path_raw failed.\n");
+		return;
+	}
 
-int ksu_observer_init(void)
-{
-	int ret = 0;
+	if (!strnstr(buf, "/system/packages.list", 128))
+		return;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
-	g = fsnotify_alloc_group(&ksu_ops, 0);
-#else
-	g = fsnotify_alloc_group(&ksu_ops);
+	pr_info("renameat: %s -> %s, new path: %s\n", old_dentry->d_iname, new_dentry->d_iname, buf);
+	track_throne(false);
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+	// Renew the priority uid bitmap filter after packages.list changed
+	susfs_parse_priority_app_strings();
 #endif
-	if (IS_ERR(g))
-		return PTR_ERR(g);
-
-	ret = watch_one_dir(&g_watch);
-	pr_info("observer init done\n");
-	return 0;
+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) && defined(CMD_SUSFS_SET_SUS_PATH_UID_FILTER)
+	// Renew the sus path uid bitmap filter after packages.list changed
+	susfs_parse_sus_path_app_strings();
+#endif // CONFIG_KSU_SUSFS_SUS_PATH && CMD_SUSFS_SET_SUS_PATH_UID_FILTER
+	return;
 }
 
-void __exit ksu_observer_exit(void)
+static inline void ksu_rename_observer(struct dentry *old_dentry, struct dentry *new_dentry)
 {
-	unwatch_one_dir(&g_watch);
+	// skip kernel threads
+	if (!current->mm)
+		return;
+
+	if (!old_dentry || !new_dentry)
+		return;
+
+	// skip non system uid
+	if (likely(current_uid().val != 1000))
+		return;
+
+	constexpr unsigned char plist[] = "packages.list";
+
+	// HASH_LEN_DECLARE see dcache.h
+	if (likely(new_dentry->d_name.len != sizeof(plist) - 1  ))
+		return;
+
+	// /data/system/packages.list.tmp -> /data/system/packages.list
+	if (likely(!!memcmp_inline(new_dentry->d_iname, plist, sizeof(plist) - 1 )))
+		return;
+
+	// cache dir inode, we try to go for fast path, lockless
+	if (unlikely(!system_dir_inode_ptr))
+		ksu_grab_data_system_inode();
+
+	if (unlikely(!system_dir_inode_ptr))
+		goto slow_path;
+
+	if (unlikely(!new_dentry->d_parent || !new_dentry->d_parent->d_inode))
+		goto slow_path;
+
 	/*
-	 * A group's marks are released by a delayed work
-	 * (fsnotify_mark_destroy_workfn) that runs after synchronize_srcu() and calls
-	 * group->ops->free_mark(), reading mark->group on the way.  Drain that work
-	 * *before* dropping the group: dropping it first makes those callbacks read a
-	 * freed group, and returning before the work has run at all lets the module be
-	 * unloaded while the callback text is still pending - either way, a
-	 * use-after-free in fsnotify_mark_destroy_workfn.
+	 * fallback to slow path, but this should NOT change unless someone overlays /data/system
+	 * but then again maybe https://github.com/tiann/KernelSU/pull/2633#discussion_r2141740346
+	 * but /data is casefolded, overlaying is really really unlikely
+	 * we self heal this thing, so on enxt run, it will try to grab d inode again
+	 * alternatively we can use packages.list inode change as trigger too, however,
+	 * we need to save last state. more writes.
 	 */
-	fsnotify_wait_marks_destroyed();
-	fsnotify_put_group(g);
-	pr_info("observer exit done\n");
+	if (unlikely((void *)new_dentry->d_parent->d_inode != system_dir_inode_ptr))
+		goto slow_path;
+
+	pr_info("renameat: %s -> %s, /data/system d_inode: 0x%lx \n", old_dentry->d_iname, new_dentry->d_iname, system_dir_inode_ptr);
+	track_throne(false);
+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) 
+	// Renew the sus path uid bitmap filter after packages.list changed
+	susfs_parse_sus_path_app_strings();
+#endif // CONFIG_KSU_SUSFS_SUS_PATH
+	return;
+
+slow_path:
+	ksu_rename_observer_slow(old_dentry, new_dentry);
+	return;
 }
