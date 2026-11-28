@@ -16,6 +16,7 @@
 #   opt      -mtune=cortex-a710 -O3 (+ full LTO at build time), see stage_opt
 #   lz4      LZ4 v1.10.0 + arm64 NEON decompressor (zram/f2fs/erofs), patches/lz4-1.10.0-arm64-neon-6.1.patch
 #   clang18  build with AOSP clang r522817 (clang 18.0.1) and -mtune=cortex-a720 (device-tested 2026-11-27)
+#   fqcodel  fq_codel as the default qdisc from boot (Wi-Fi otherwise keeps pfifo_fast)
 #   ksun     KernelSU-Next v3.4.2 + SUSFS v2.4.0 (replaces TechAmethyst's v3.4.1 + SUSFS v2.3.0)
 #   clang20  build with AOSP clang r547379 (clang 20.0.0, Android 16 release compiler)
 #   sukisu   variant: SukiSU Nova (builtin-new, SUSFS v2.4.0) instead of KernelSU-Next; on top of ksun.
@@ -47,7 +48,7 @@ SUKI_REPO=${SUKI_REPO:-https://github.com/SukiSU-Nova/SukiSU-Nova}
 SUKI_REF=${SUKI_REF:-5a3ec4145059ed2c4f22c70a16a28a616e104c33}   # builtin-new 2026-11-16 (UAPI 6 = manager v3.0.0)
 SUKI_VERSION=${SUKI_VERSION:-30007}; SUKI_TAG=${SUKI_TAG:-v3.0.0}  # upstream formula: 30000 + main commits (4008) - 4001
 DEFC=$C/arch/arm64/configs/gki_defconfig
-ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun autofdo)   # + opt-in: lean, version
+ALL_STAGES=(brand misc net cifs ntsync bbg bbrv3 perf opt lz4 clang18 ksun fqcodel autofdo)   # + opt-in: lean, version
 
 say(){ printf '\n\033[1;36m[BluedMC] %s\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31m[ERROR] %s\033[0m\n' "$*"; exit 1; }
@@ -307,6 +308,18 @@ stage_clang18(){
   commit "$BRAND: clang18 build with AOSP clang r522817, -mtune=cortex-a720"
 }
 
+# ------------------------------------------------------------------------------------------------ fqcodel
+# The kernel default is pfifo_fast; HyperOS/manager apps set net.core.default_qdisc only after wlan0
+# already has its queues, so Wi-Fi stays on a plain FIFO. Setting the default at build time fixes that.
+stage_fqcodel(){
+  say "fqcodel: default qdisc fq_codel"
+  setcfg CONFIG_NET_SCH_FQ_CODEL y
+  setcfg CONFIG_NET_SCH_DEFAULT y
+  setcfg CONFIG_DEFAULT_FQ_CODEL y
+  add_feature fqcodel
+  commit "$BRAND: fqcodel default qdisc fq_codel"
+}
+
 # ------------------------------------------------------------------------------------------------ sukisu
 # Replaces drivers/kernelsu (KernelSU-Next) with SukiSU Nova's in-kernel "builtin-new" line, which builds on
 # the same SUSFS v2.4.0 kernel hooks the ksun stage installs. Its Makefile asks the GitHub API and git for
@@ -378,8 +391,12 @@ MK
 # replaced by the pinned pershoot dev-susfs commit, the same pair WildKernels r23 ships its manager for.
 stage_ksun(){
   say "ksun: KernelSU-Next $KSUN_TAG ($KSUN_VERSION, ${KSUN_REF:0:7}) + SUSFS v2.4.0"
-  grep -q 'SUSFS_VERSION "v2.3.0"' "$C/include/linux/susfs.h" || die "expected TechAmethyst's SUSFS v2.3.0"
-  apply "$REPO/patches/susfs-v2.4.0-f76b81f-6.1.138.patch"
+  if grep -q 'SUSFS_VERSION "v2.4.0"' "$C/include/linux/susfs.h"; then
+    say "ksun: SUSFS v2.4.0 kernel hooks already present (newer base), only replacing drivers/kernelsu"
+  else
+    grep -q 'SUSFS_VERSION "v2.3.0"' "$C/include/linux/susfs.h" || die "expected TechAmethyst's SUSFS v2.3.0"
+    apply "$REPO/patches/susfs-v2.4.0-f76b81f-6.1.138.patch"
+  fi
   local k; k=$(mktemp -d)
   git -C "$k" init -q && git -C "$k" fetch -q --depth 1 "$KSUN_REPO" "$KSUN_REF" || die "fetch $KSUN_REPO $KSUN_REF"
   rm -rf "$C/drivers/kernelsu" && mkdir "$C/drivers/kernelsu"
