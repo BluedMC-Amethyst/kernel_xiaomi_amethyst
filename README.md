@@ -61,7 +61,8 @@ Install the **BluedMC AutoFDO recorder** module, record a session of normal use 
 On HyperOS, Xiaomi's prebuilt display driver (`msm_drm` / `mi_disp`) makes the screen **flicker or pulse** on newer GKI sublevels, even though every module loads cleanly.
 BluedMC v1.0 (6.1.172) showed this on amethyst, and WildKernels issues #140 (amethyst, 6.1.141) and #283 (Xiaomi 14, 6.1.176) report the same; building on 6.1.138 fixes it.
 A v1.0 test build without the `perf`/`opt` commits still flickered, so the sublevel jump is the cause, not BluedMC's additions.
-**Don't move BluedMC off 6.1.138 until Xiaomi ships a newer stock kernel.**
+**Likely cause (reported by chkndrp):** ACK commit [`ffb55ddf2685` "drm: Add valid clones check"](https://android.googlesource.com/kernel/common/+/ffb55ddf26850a8af666d9c04086ad9b34b6a8a4%5E%21/), which arrived after 6.1.138. It adds `drm_atomic_check_valid_clones()` to every atomic commit, and that function is present in our 6.1.172 tree and absent in 6.1.138. A future rebase onto a newer monthly tag (e.g. android14-6.1-2026-12) should revert it and then be device-tested for flicker.
+**Until that has been tested, BluedMC stays on 6.1.138.**
 
 ## Installing (HyperOS)
 Releases ship **one AnyKernel3 zip**: `BluedMC-vX.Y-amethyst-*.zip`, plus `SHA256SUMS` and `config.txt`.
